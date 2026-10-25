@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LightboxModal } from './components/common/LightboxModal.jsx';
 import { useKeyPress } from './hooks/useKeyPress.js';
 import { copyToClipboard } from './utils/clipboard.js';
 import {
@@ -3796,8 +3797,6 @@ function LineupsPage({
   const countForMap = (map) =>
     allLineups.filter((item) => item.map === map).length;
 
-  useKeyPress('Escape', () => setPreviewLineup(null), Boolean(previewLineup));
-
   const copyInstructions = async (lineup) => {
     const text = `🎯 **Lineup: ${lineup.title}**\n📍 Mapa: ${lineup.map} | Agente: ${lineup.agent} | Lado: ${lineup.side || 'Ataque'}${lineup.ability ? ` | Habilidade: ${lineup.ability}` : ''}\n\n📝 **Instruções:**\n${lineup.instructions || 'Sem instruções registradas.'}${lineup.link ? `\n\n🔗 Referência: ${lineup.link}` : ''}`;
     const ok = await copyToClipboard(text);
@@ -3964,104 +3963,85 @@ function LineupsPage({
       )}
 
       {previewLineup && (
-        <div
-          className="modal-backdrop lineup-lightbox-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewLineup(null);
-          }}
-        >
-          <div className="lineup-lightbox-card" role="dialog" aria-modal="true">
-            <div className="lineup-lightbox-header">
-              <div className="lineup-lightbox-title-area">
-                <div className="lineup-kicker">
-                  {previewLineup.map} <span>•</span> {previewLineup.agent}
-                </div>
-                <h2>{previewLineup.title}</h2>
-                {previewLineup.ability && (
-                  <span
-                    className="ability-label"
-                    style={{ marginTop: 4, display: 'inline-flex' }}
-                  >
-                    <Zap size={13} /> {previewLineup.ability}
-                  </span>
-                )}
+        <LightboxModal
+          onClose={() => setPreviewLineup(null)}
+          imageSrc={previewLineup.imageData}
+          imageAlt={`Visualização de ${previewLineup.title}`}
+          headerTitle={
+            <>
+              <div className="lineup-kicker">
+                {previewLineup.map} <span>•</span> {previewLineup.agent}
               </div>
-              <div className="lineup-lightbox-header-actions">
+              <h2>{previewLineup.title}</h2>
+              {previewLineup.ability && (
                 <span
-                  className={`side-tag ${previewLineup.side?.toLowerCase()}`}
-                  style={{ position: 'static' }}
+                  className="ability-label"
+                  style={{ marginTop: 4, display: 'inline-flex' }}
                 >
-                  {previewLineup.side || 'Ataque'}
+                  <Zap size={13} /> {previewLineup.ability}
                 </span>
-                <button
-                  className="icon-button"
-                  aria-label="Fechar"
-                  title="Fechar (Esc)"
-                  onClick={() => setPreviewLineup(null)}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div className="lineup-lightbox-body">
-              <div className="lineup-lightbox-media">
-                <img
-                  src={previewLineup.imageData}
-                  alt={`Visualização de ${previewLineup.title}`}
-                />
-              </div>
-              <div className="lineup-lightbox-sidebar">
-                <div className="lineup-instructions-box">
-                  <div className="instructions-header">
-                    <strong>Instruções de Execução</strong>
-                    <button
-                      type="button"
-                      className="button button-quiet button-micro"
-                      onClick={() => copyInstructions(previewLineup)}
-                      title="Copiar texto de execução"
-                    >
-                      <Copy size={12} /> Copiar
-                    </button>
-                  </div>
-                  <p>
-                    {previewLineup.instructions ||
-                      'Nenhuma instrução por escrito cadastrada para esta lineup.'}
-                  </p>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                    marginTop: 'auto',
-                  }}
-                >
-                  {previewLineup.link && (
-                    <button
-                      type="button"
-                      className="button button-secondary button-small"
-                      onClick={() => onOpen(previewLineup.link)}
-                    >
-                      <ExternalLink size={14} /> Abrir link de referência
-                    </button>
-                  )}
+              )}
+            </>
+          }
+          headerBadge={
+            <span
+              className={`side-tag ${previewLineup.side?.toLowerCase()}`}
+              style={{ position: 'static' }}
+            >
+              {previewLineup.side || 'Ataque'}
+            </span>
+          }
+          sidebar={
+            <>
+              <div className="lineup-instructions-box">
+                <div className="instructions-header">
+                  <strong>Instruções de Execução</strong>
                   <button
                     type="button"
-                    className="button button-quiet button-small"
-                    onClick={() => {
-                      const item = previewLineup;
-                      setPreviewLineup(null);
-                      onEdit(item);
-                    }}
+                    className="button button-quiet button-micro"
+                    onClick={() => copyInstructions(previewLineup)}
+                    title="Copiar texto de execução"
                   >
-                    <Pencil size={14} /> Editar dados da lineup
+                    <Copy size={12} /> Copiar
                   </button>
                 </div>
+                <p>
+                  {previewLineup.instructions ||
+                    'Nenhuma instrução por escrito cadastrada para esta lineup.'}
+                </p>
               </div>
-            </div>
-          </div>
-        </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  marginTop: 'auto',
+                }}
+              >
+                {previewLineup.link && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-small"
+                    onClick={() => onOpen(previewLineup.link)}
+                  >
+                    <ExternalLink size={14} /> Abrir link de referência
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button button-quiet button-small"
+                  onClick={() => {
+                    const item = previewLineup;
+                    setPreviewLineup(null);
+                    onEdit(item);
+                  }}
+                >
+                  <Pencil size={14} /> Editar dados da lineup
+                </button>
+              </div>
+            </>
+          }
+        />
       )}
     </section>
   );
@@ -4976,8 +4956,6 @@ function TacticsPage({
   const countForMap = (map) =>
     tactics.filter((item) => item.map === map).length;
 
-  useKeyPress('Escape', () => setPreviewTactic(null), Boolean(previewTactic));
-
   const copyTactic = async (item) => {
     let text = `📖 **TÁTICO: ${item.title}**\n`;
     text += `📍 Mapa: **${item.map}** | Lado: **${item.side || 'Ambos'}** | Categoria: **${item.category}**\n\n`;
@@ -5250,96 +5228,77 @@ function TacticsPage({
       )}
 
       {previewTactic && (
-        <div
-          className="modal-backdrop lineup-lightbox-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewTactic(null);
-          }}
-        >
-          <div className="lineup-lightbox-card" role="dialog" aria-modal="true">
-            <div className="lineup-lightbox-header">
-              <div className="lineup-lightbox-title-area">
-                <div className="lineup-kicker">
-                  {previewTactic.map} <span>•</span> {previewTactic.category}
-                </div>
-                <h2>{previewTactic.title}</h2>
+        <LightboxModal
+          onClose={() => setPreviewTactic(null)}
+          imageSrc={previewTactic.imageData}
+          imageAlt={`Visualização de ${previewTactic.title}`}
+          headerTitle={
+            <>
+              <div className="lineup-kicker">
+                {previewTactic.map} <span>•</span> {previewTactic.category}
               </div>
-              <div className="lineup-lightbox-header-actions">
-                <span
-                  className={`side-tag ${(previewTactic.side || 'Ambos').toLowerCase()}`}
-                  style={{ position: 'static' }}
-                >
-                  {previewTactic.side || 'Ambos'}
-                </span>
-                <button
-                  className="icon-button"
-                  aria-label="Fechar"
-                  title="Fechar (Esc)"
-                  onClick={() => setPreviewTactic(null)}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div className="lineup-lightbox-body">
-              <div className="lineup-lightbox-media">
-                <img
-                  src={previewTactic.imageData}
-                  alt={`Visualização de ${previewTactic.title}`}
-                />
-              </div>
-              <div className="lineup-lightbox-sidebar">
-                <div className="lineup-instructions-box">
-                  <div className="instructions-header">
-                    <strong>Instruções e Execução</strong>
-                    <button
-                      type="button"
-                      className="button button-quiet button-micro"
-                      onClick={() => copyTactic(previewTactic)}
-                      title="Copiar texto do tático"
-                    >
-                      <Copy size={12} /> Copiar
-                    </button>
-                  </div>
-                  <p>
-                    {previewTactic.description ||
-                      'Nenhuma instrução por escrito cadastrada para este tático.'}
-                  </p>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                    marginTop: 'auto',
-                  }}
-                >
-                  {previewTactic.link && (
-                    <button
-                      type="button"
-                      className="button button-secondary button-small"
-                      onClick={() => onOpen(previewTactic.link)}
-                    >
-                      <ExternalLink size={14} /> Abrir link de referência
-                    </button>
-                  )}
+              <h2>{previewTactic.title}</h2>
+            </>
+          }
+          headerBadge={
+            <span
+              className={`side-tag ${(previewTactic.side || 'Ambos').toLowerCase()}`}
+              style={{ position: 'static' }}
+            >
+              {previewTactic.side || 'Ambos'}
+            </span>
+          }
+          sidebar={
+            <>
+              <div className="lineup-instructions-box">
+                <div className="instructions-header">
+                  <strong>Instruções e Execução</strong>
                   <button
                     type="button"
-                    className="button button-quiet button-small"
-                    onClick={() => {
-                      const item = previewTactic;
-                      setPreviewTactic(null);
-                      onEdit(item);
-                    }}
+                    className="button button-quiet button-micro"
+                    onClick={() => copyTactic(previewTactic)}
+                    title="Copiar texto do tático"
                   >
-                    <Pencil size={14} /> Editar dados do tático
+                    <Copy size={12} /> Copiar
                   </button>
                 </div>
+                <p>
+                  {previewTactic.description ||
+                    'Nenhuma instrução por escrito cadastrada para este tático.'}
+                </p>
               </div>
-            </div>
-          </div>
-        </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  marginTop: 'auto',
+                }}
+              >
+                {previewTactic.link && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-small"
+                    onClick={() => onOpen(previewTactic.link)}
+                  >
+                    <ExternalLink size={14} /> Abrir link de referência
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button button-quiet button-small"
+                  onClick={() => {
+                    const item = previewTactic;
+                    setPreviewTactic(null);
+                    onEdit(item);
+                  }}
+                >
+                  <Pencil size={14} /> Editar dados do tático
+                </button>
+              </div>
+            </>
+          }
+        />
       )}
     </section>
   );
