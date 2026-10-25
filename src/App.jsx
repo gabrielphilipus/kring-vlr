@@ -1,4 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { copyToClipboard } from './utils/clipboard.js';
+import {
+  formatDate,
+  parseTimeToSeconds,
+  percent,
+  today,
+} from './utils/formatters.js';
+import {
+  levenshtein,
+  normalizeUrl,
+  slugifyCategory,
+  uid,
+} from './utils/string.js';
 import {
   Activity,
   ArrowDownToLine,
@@ -64,15 +77,6 @@ const NAV_ITEMS = [
   { id: 'training', label: 'Treino individual', icon: Activity },
   { id: 'stats', label: 'Estatísticas', icon: BarChart3 },
 ];
-const today = () => {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 10);
-};
-const uid = () =>
-  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-const percent = (n) => `${Math.round((n || 0) * 10) / 10}%`;
 
 function calcStats(rows) {
   const wins = rows.filter((r) => r.result === 'Vitória').length;
@@ -116,23 +120,6 @@ function groupStats(rows, getKey) {
   return Array.from(groups.entries())
     .map(([name, list]) => ({ name, ...calcStats(list) }))
     .sort((a, b) => b.matches - a.matches || b.winrate - a.winrate);
-}
-
-function formatDate(value) {
-  if (!value) return '—';
-  const parsed = new Date(`${value}T12:00:00`);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : parsed.toLocaleDateString('pt-BR');
-}
-
-function normalizeUrl(value) {
-  const raw = (value || '').trim();
-  if (!raw) return '';
-  if (/^https:\/\//i.test(raw)) return raw;
-  if (/^(www\.)?(youtube\.com|youtu\.be|twitch\.tv)\//i.test(raw))
-    return `https://${raw}`;
-  return raw;
 }
 
 async function compressImage(file) {
@@ -1336,13 +1323,13 @@ function App() {
     setFilters((previous) => ({ ...previous, [key]: value }));
 
   const handleCopyDiscordReport = async (vod) => {
-    try {
-      const text = formatDiscordReport(vod);
-      await navigator.clipboard.writeText(text);
+    const text = formatDiscordReport(vod);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       setToast(
         '📋 Relatório copiado para a área de transferência! Cole no Discord.'
       );
-    } catch {
+    } else {
       setToast('Não foi possível copiar o relatório.');
     }
   };
@@ -3214,17 +3201,11 @@ function VetoSimulator({ maps, mapsStats = [], onToast }) {
 
     text += `\n*Gerado pelo KRING Valorant Analyzer*`;
 
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast) onToast('Resumo copiado para a área de transferência!');
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      if (onToast) onToast('Resumo copiado para o Discord!');
+    } else {
+      if (onToast) onToast('Não foi possível copiar o resumo.');
     }
   };
 
@@ -3825,17 +3806,11 @@ function LineupsPage({
 
   const copyInstructions = async (lineup) => {
     const text = `🎯 **Lineup: ${lineup.title}**\n📍 Mapa: ${lineup.map} | Agente: ${lineup.agent} | Lado: ${lineup.side || 'Ataque'}${lineup.ability ? ` | Habilidade: ${lineup.ability}` : ''}\n\n📝 **Instruções:**\n${lineup.instructions || 'Sem instruções registradas.'}${lineup.link ? `\n\n🔗 Referência: ${lineup.link}` : ''}`;
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast) onToast('Instruções copiadas para a área de transferência!');
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      if (onToast) onToast('Instruções copiadas!');
+    } else {
+      if (onToast) onToast('Não foi possível copiar as instruções.');
     }
   };
 
@@ -4717,17 +4692,11 @@ function GameplansPage({
     text += `\n📝 **Estratégia e Execução:**\n${plan.description || 'Sem descrição cadastrada.'}\n\n`;
     text += `*Gerado pelo KRING Valorant Analyzer*`;
 
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast) onToast('Gameplan copiado para a área de transferência!');
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      if (onToast) onToast('Gameplan copiado!');
+    } else {
+      if (onToast) onToast('Não foi possível copiar o gameplan.');
     }
   };
 
@@ -5031,17 +5000,11 @@ function TacticsPage({
     }
     text += `\n*Gerado pelo KRING Valorant Analyzer*`;
 
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast) onToast('Tático copiado para a área de transferência!');
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      if (onToast) onToast('Tático copiado!');
+    } else {
+      if (onToast) onToast('Não foi possível copiar o tático.');
     }
   };
 
@@ -5527,10 +5490,10 @@ function TrainingPage({
       `_Gerado pelo KRING Valorant Analyzer_`,
     ];
 
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+    const ok = await copyToClipboard(lines.join('\n'));
+    if (ok) {
       if (onToast) onToast('Rotina semanal copiada para o Discord!');
-    } catch {
+    } else {
       if (onToast) onToast('Falha ao copiar rotina.');
     }
   };
@@ -5642,7 +5605,7 @@ function TrainingPage({
                 <button
                   key={cat}
                   type="button"
-                  className={`filter-chip ${categoryFilter === cat ? 'active' : ''} ${cat !== 'Todas' ? `cat-chip-${cat.toLowerCase().replace(/[\s/]+/g, '-')}` : ''}`}
+                  className={`filter-chip ${categoryFilter === cat ? 'active' : ''} ${cat !== 'Todas' ? `cat-chip-${slugifyCategory(cat)}` : ''}`}
                   onClick={() => setCategoryFilter(cat)}
                 >
                   {cat}
@@ -5751,9 +5714,7 @@ function TrainingPage({
 
                 <div className="training-list">
                   {items.map((item) => {
-                    const catSlug = (item.category || 'Mecânica')
-                      .toLowerCase()
-                      .replace(/[\s/]+/g, '-');
+                    const catSlug = slugifyCategory(item.category);
                     return (
                       <div
                         className={`training-item ${item.done ? 'completed' : ''}`}
@@ -6611,10 +6572,10 @@ function StatsPage({ vods, gameplans = [], onToast }) {
     text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     text += `_Gerado pelo KRING Valorant Analyzer_`;
 
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast) onToast('Relatório copiado para o Discord!');
-    } catch {
+    } else {
       if (onToast) onToast('Erro ao copiar relatório.');
     }
   };
@@ -7549,23 +7510,15 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
     }, 30);
   };
 
-  const parseTimeToSeconds = (str) => {
-    if (!str) return 0;
-    const parts = str.split(':').map((p) => parseInt(p, 10));
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-    return 0;
-  };
-
   const copyDiscord = async () => {
-    try {
-      const text = formatDiscordReport(vod);
-      await navigator.clipboard.writeText(text);
+    const text = formatDiscordReport(vod);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       if (onToast)
         onToast(
           '📋 Relatório copiado para a área de transferência! Cole no Discord.'
         );
-    } catch {
+    } else {
       if (onToast) onToast('Não foi possível copiar o relatório.');
     }
   };
@@ -7608,25 +7561,6 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
       'sidearm',
       'sheriffisidearm',
     ]);
-
-    function levenshtein(a, b) {
-      const matrix = [];
-      for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-      for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-      for (let i = 1; i <= b.length; i++) {
-        for (let j = 1; j <= a.length; j++) {
-          if (b.charAt(i - 1) === a.charAt(j - 1))
-            matrix[i][j] = matrix[i - 1][j - 1];
-          else
-            matrix[i][j] = Math.min(
-              matrix[i - 1][j - 1] + 1,
-              matrix[i][j - 1] + 1,
-              matrix[i - 1][j] + 1
-            );
-        }
-      }
-      return matrix[b.length][a.length];
-    }
 
     const candidates = [];
     for (const [name, s] of Object.entries(raw)) {
