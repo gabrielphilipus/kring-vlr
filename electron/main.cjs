@@ -35,6 +35,13 @@ const {
 let mainWindow;
 let currentAnalyzerProcess = null;
 
+function stripUtf8Bom(str) {
+  if (typeof str === 'string' && str.charCodeAt(0) === 0xfeff) {
+    return str.slice(1);
+  }
+  return str;
+}
+
 function getDataDir() {
   if (!app.isPackaged && process.env.KRING_DATA_DIR) {
     return path.resolve(process.env.KRING_DATA_DIR);
@@ -124,7 +131,7 @@ async function createRotatingBackupIfNeeded(force = false) {
   const dir = getDataDir();
   try {
     const content = await fs.readFile(file, 'utf8');
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(stripUtf8Bom(content));
     if (parsed && typeof parsed === 'object' && Array.isArray(parsed.vods)) {
       const backupPath = path.join(dir, getRotatingBackupName());
       await fs.copyFile(file, backupPath);
@@ -176,7 +183,7 @@ async function findLatestValidBackup() {
       try {
         const content = await fs.readFile(item.filePath, 'utf8');
         if (content && content.trim().length > 0) {
-          const parsed = JSON.parse(content);
+          const parsed = JSON.parse(stripUtf8Bom(content));
           if (
             parsed &&
             typeof parsed === 'object' &&
@@ -204,7 +211,8 @@ async function findLatestValidBackup() {
 
 async function loadCatalogSeed() {
   try {
-    const parsed = JSON.parse(await fs.readFile(seedFile(), 'utf8'));
+    const rawSeed = await fs.readFile(seedFile(), 'utf8');
+    const parsed = JSON.parse(stripUtf8Bom(rawSeed));
     return {
       maps: Array.isArray(parsed.maps) ? parsed.maps : [],
       agents: Array.isArray(parsed.agents) ? parsed.agents : [],
@@ -217,19 +225,41 @@ async function loadCatalogSeed() {
 async function createPreMigrationBackup(originalFilePath) {
   const dir = getDataDir();
   const baseName = 'kring-vlr-data.pre-migration-v4.bak';
-  let targetPath = path.join(dir, baseName);
+  const targetPath = path.join(dir, baseName);
 
   try {
     const exists = await fs
       .access(targetPath)
       .then(() => true)
       .catch(() => false);
+
     if (exists) {
-      targetPath = path.join(
+      // Se o backup base já existe, compara com o arquivo original atual
+      const [origBuffer, backupBuffer] = await Promise.all([
+        fs.readFile(originalFilePath),
+        fs.readFile(targetPath),
+      ]);
+
+      if (origBuffer.equals(backupBuffer)) {
+        // Cópia idêntica já preservada; não acumula backups repetidos
+        console.info(
+          '[migration] Backup pré-migração idêntico já existe. Não gerando duplicata.'
+        );
+        return targetPath;
+      }
+
+      // Se o arquivo original for diferente, salva com timestamp
+      const timestampedPath = path.join(
         dir,
         `kring-vlr-data.pre-migration-v4.${Date.now()}.bak`
       );
+      await fs.copyFile(originalFilePath, timestampedPath);
+      console.info(
+        `[migration] Backup pré-migração salvo em: ${path.basename(timestampedPath)}`
+      );
+      return timestampedPath;
     }
+
     await fs.copyFile(originalFilePath, targetPath);
     console.info(
       `[migration] Backup pré-migração salvo em: ${path.basename(targetPath)}`
@@ -238,6 +268,48 @@ async function createPreMigrationBackup(originalFilePath) {
   } catch (err) {
     console.error('[migration] Falha ao criar backup pré-migração:', err);
     throw err;
+  }
+}
+
+async function createPreImportBackup() {
+  const file = dataFile();
+  const dir = getDataDir();
+  try {
+    const exists = await fs
+      .access(file)
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) return null;
+
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const MM = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const HH = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const backupName = `kring-vlr-data.pre-import-${yyyy}${MM}${dd}-${HH}${mm}.bak`;
+    let targetPath = path.join(dir, backupName);
+
+    const alreadyExists = await fs
+      .access(targetPath)
+      .then(() => true)
+      .catch(() => false);
+    if (alreadyExists) {
+      targetPath = path.join(
+        dir,
+        `kring-vlr-data.pre-import-${yyyy}${MM}${dd}-${HH}${mm}.${Date.now()}.bak`
+      );
+    }
+
+    await fs.copyFile(file, targetPath);
+    console.info(
+      '[import] Backup pré-importação criado:',
+      path.basename(targetPath)
+    );
+    return targetPath;
+  } catch (err) {
+    console.error('[import] Falha ao criar backup pré-importação:', err);
+    return null;
   }
 }
 
@@ -361,7 +433,7 @@ async function loadData() {
       typeof fileContent === 'string' &&
       fileContent.trim().length > 0
     ) {
-      parsed = JSON.parse(fileContent);
+      parsed = JSON.parse(stripUtf8Bom(fileContent));
       if (typeof parsed !== 'object' || parsed === null) {
         throw new Error('Conteúdo não é um objeto JSON válido.');
       }
@@ -490,29 +562,45 @@ async function loadData() {
   };
 }
 
-ipcMain.handle('data:load', async () => loadData());
-ipcMain.handle('data:import', async (_event, rawData) => {
+async function handleDataImport(rawData) {
+  let payload = rawData;
+  if (typeof rawData === 'string') {
+    try {
+      payload = JSON.parse(stripUtf8Bom(rawData));
+    } catch {
+      return { ok: false, error: 'JSON inválido para importação.' };
+    }
+  }
+
   if (
-    !rawData ||
-    typeof rawData !== 'object' ||
-    !Array.isArray(rawData.vods) ||
-    !Array.isArray(rawData.lineups)
+    !payload ||
+    typeof payload !== 'object' ||
+    !Array.isArray(payload.vods) ||
+    !Array.isArray(payload.lineups)
   ) {
     return { ok: false, error: 'Formato de dados inválido para importação.' };
   }
 
   const seed = await loadCatalogSeed();
-  const normalized = migrateAndNormalize(rawData, seed);
+  const normalized = migrateAndNormalize(payload, seed);
   if (!normalized.ok) {
     return normalized;
   }
+
+  // Guarda uma cópia de segurança dos dados atuais antes de aplicar a importação
+  await createPreImportBackup();
 
   return {
     ok: true,
     data: normalized.data,
     migratedV4: normalized.migratedV4,
   };
-});
+}
+
+ipcMain.handle('data:load', async () => loadData());
+ipcMain.handle('data:import', async (_event, rawData) =>
+  handleDataImport(rawData)
+);
 ipcMain.handle('data:save', async (_event, data) => {
   if (
     !data ||
@@ -1187,9 +1275,12 @@ app.on('will-quit', () => {
 });
 
 module.exports = {
+  stripUtf8Bom,
   getDataDir,
   createPreMigrationBackup,
+  createPreImportBackup,
   migrateAndNormalize,
   formatDataPayload,
   loadData,
+  handleDataImport,
 };

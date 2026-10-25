@@ -1127,7 +1127,10 @@ function App() {
     event.target.value = '';
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text());
+      const fileText = await file.text();
+      const cleanText =
+        fileText.charCodeAt(0) === 0xfeff ? fileText.slice(1) : fileText;
+      const parsed = JSON.parse(cleanText);
       if (!Array.isArray(parsed.vods) || !Array.isArray(parsed.lineups))
         throw new Error('Formato inesperado');
       if (

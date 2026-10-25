@@ -60,10 +60,13 @@ vi.mock('electron-updater', () => mockUpdater);
 
 // Require main.cjs exports
 const {
+  stripUtf8Bom,
   getDataDir,
   createPreMigrationBackup,
+  createPreImportBackup,
   migrateAndNormalize,
   loadData,
+  handleDataImport,
 } = require('../electron/main.cjs');
 
 describe('Main Process Migration & Data Persistence Integration', () => {
@@ -154,22 +157,28 @@ describe('Main Process Migration & Data Persistence Integration', () => {
     expect(fileOnDisk.vods[0].roundsWon).toBe(13);
   });
 
-  it('does not overwrite pre-migration backup if already present, appending timestamp', async () => {
+  it('does not accumulate pre-migration backups in repeated failures on identical file, appending timestamp only if file changed', async () => {
     const originalFile = path.join(tempDir, 'original.json');
     await fs.writeFile(originalFile, '{"version": 1}', 'utf8');
 
-    // Create first pre-migration backup
+    // Primeira tentativa de backup
     const firstBackup = await createPreMigrationBackup(originalFile);
     expect(path.basename(firstBackup)).toBe(
       'kring-vlr-data.pre-migration-v4.bak'
     );
 
-    // Call again, should create timestamped backup
+    // Segunda tentativa com o MESMO arquivo original (ex.: falhas consecutivas de migração)
     const secondBackup = await createPreMigrationBackup(originalFile);
-    expect(path.basename(secondBackup)).toMatch(
+    // NÃO deve gerar arquivo duplicado
+    expect(secondBackup).toBe(firstBackup);
+
+    // Terceira tentativa caso o arquivo original tenha sido alterado externamente
+    await fs.writeFile(originalFile, '{"version": 2}', 'utf8');
+    const thirdBackup = await createPreMigrationBackup(originalFile);
+    expect(path.basename(thirdBackup)).toMatch(
       /^kring-vlr-data\.pre-migration-v4\.\d+\.bak$/
     );
-    expect(firstBackup).not.toBe(secondBackup);
+    expect(firstBackup).not.toBe(thirdBackup);
   });
 
   it('rejects unsupported future schemaVersion (e.g. 99) without modifying original file', async () => {
@@ -306,5 +315,62 @@ describe('Main Process Migration & Data Persistence Integration', () => {
     expect(diskContent).toBe(originalV3Content);
 
     renameSpy.mockRestore();
+  });
+
+  it('tolerates UTF-8 BOM (\\uFEFF) in stripUtf8Bom helper and loadData', async () => {
+    expect(stripUtf8Bom('\uFEFF{"hello": "world"}')).toBe('{"hello": "world"}');
+    expect(stripUtf8Bom('{"hello": "world"}')).toBe('{"hello": "world"}');
+
+    const dataFilePath = path.join(tempDir, 'kring-vlr-data.json');
+    const rawData = JSON.stringify({
+      schemaVersion: 4,
+      vods: [],
+      lineups: [],
+    });
+    // Escreve com BOM UTF-8 no início (\uFEFF)
+    await fs.writeFile(dataFilePath, '\uFEFF' + rawData, 'utf8');
+
+    const result = await loadData();
+    expect(result.ok).toBe(true);
+    expect(result.schemaVersion).toBe(4);
+    expect(result.vods).toEqual([]);
+  });
+
+  it('tolerates UTF-8 BOM in data:import string payload and creates pre-import backup of current data', async () => {
+    // 1. Prepara dados atuais existentes em disco
+    const dataFilePath = path.join(tempDir, 'kring-vlr-data.json');
+    await fs.writeFile(
+      dataFilePath,
+      JSON.stringify(
+        { schemaVersion: 4, vods: [{ id: 'current' }], lineups: [] },
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+    // 2. Cria backup pré-importação
+    const backupCreated = await createPreImportBackup();
+    expect(backupCreated).not.toBeNull();
+    expect(path.basename(backupCreated)).toMatch(
+      /^kring-vlr-data\.pre-import-\d{8}-\d{4}(\.\d+)?\.bak$/
+    );
+
+    // 3. Testa que data:import tolera string com BOM UTF-8
+    const rawBackupWithBom =
+      '\uFEFF' +
+      JSON.stringify({
+        schemaVersion: 3,
+        vods: [
+          { map: 'Ascent', agent: 'Jett', roundsWon: '13', roundsLost: '8' },
+        ],
+        lineups: [],
+      });
+
+    const importRes = await handleDataImport(rawBackupWithBom);
+    expect(importRes.ok).toBe(true);
+    expect(importRes.migratedV4).toBe(true);
+    expect(importRes.data.schemaVersion).toBe(4);
+    expect(importRes.data.vods[0].roundsWon).toBe(13);
   });
 });
