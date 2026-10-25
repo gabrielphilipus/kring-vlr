@@ -66,6 +66,7 @@ import {
 } from './constants/game.js';
 import { NAV_ITEMS } from './constants/navigation.js';
 import { TACTIC_CATEGORIES } from './constants/tactics.js';
+import { TRAINING_CATEGORIES } from './constants/training.js';
 
 function calcStats(rows) {
   const wins = rows.filter((r) => r.result === 'Vitória').length;
@@ -2903,14 +2904,7 @@ function App() {
                       value={form.category || 'Mecânica'}
                       onChange={(e) => updateForm('category', e.target.value)}
                     >
-                      {[
-                        'Mecânica',
-                        'Mira',
-                        'Movimentação',
-                        'Utilitários',
-                        'VOD review',
-                        'Mental',
-                      ].map((c) => (
+                      {TRAINING_CATEGORIES.map((c) => (
                         <option key={c}>{c}</option>
                       ))}
                     </select>
@@ -5282,15 +5276,6 @@ function TacticsPage({
     </section>
   );
 }
-
-const TRAINING_CATEGORIES = [
-  'Mecânica',
-  'Mira',
-  'Movimentação',
-  'Utilitários',
-  'VOD review',
-  'Mental',
-];
 
 function TrainingPage({
   training,
