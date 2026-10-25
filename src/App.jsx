@@ -620,7 +620,7 @@ function App() {
           <div className="sidebar-footer">
             <span className="status-dot" />
             <span>Kring VLR</span>
-            <span className="version">v1.0.7</span>
+            <span className="version">v1.0.8</span>
             <button
               type="button"
               className="updater-check-btn"
@@ -699,7 +699,7 @@ function App() {
               <div className="filter-field"><select aria-label="Filtrar por resultado" value={filters.result} onChange={(e) => setFilter('result', e.target.value)}><option>Todos</option>{RESULTS.map((value) => <option key={value}>{value}</option>)}</select><ChevronDown size={14} /></div>
             </div>
             {filteredVods.length === 0 ? <EmptyState icon={FileVideo2} title={data.vods.length ? 'Nenhum VOD encontrado' : 'Sua biblioteca começa aqui'} text={data.vods.length ? 'Tente mudar os filtros ou a busca.' : 'Adicione o link de uma partida do YouTube, registre mapa, agente, abates e resultado.'} actionLabel="Adicionar primeiro VOD" onAction={() => openCreate('vod')} /> :
-              <div className="vod-list">{filteredVods.map((vod) => <VodCard key={vod.id} vod={vod} gameplan={data.gameplans.find((plan) => plan.id === vod.gameplanId)} onEdit={() => openEdit('vod', vod)} onDelete={() => removeEntry('vod', vod.id)} onOpen={() => openExternal(vod.link)} onReview={() => setReviewVod(vod)} />)}</div>}
+              <div className="vod-list">{filteredVods.map((vod) => <VodCard key={vod.id} vod={vod} gameplan={data.gameplans.find((plan) => plan.id === vod.gameplanId)} onEdit={() => openEdit('vod', vod)} onDelete={() => removeEntry('vod', vod.id)} onOpen={() => openExternal(vod.link)} onReview={() => setReviewVod(vod)} onCopyDiscord={handleCopyDiscordReport} />)}</div>}
           </section>}
           {view === 'lineups' && <LineupsPage lineups={filteredLineups} allLineups={data.lineups} maps={lineupsMaps} search={search} onSearch={setSearch} onAdd={(map) => openCreate('lineup', map)} onEdit={(item) => openEdit('lineup', item)} onDelete={(id) => removeEntry('lineup', id)} onOpen={openExternal} />}
           {view === 'tactics' && <TacticsPage tactics={data.tactics} maps={tacticsMaps} onAdd={(map) => openCreate('tactic', map)} onEdit={(item) => openEdit('tactic', item)} onDelete={(id) => removeEntry('tactic', id)} onOpen={openExternal} onExportDefaults={exportDefaults} onImportDefaults={importDefaults} />}
@@ -869,7 +869,7 @@ function App() {
         </form>
       </Modal>}
 
-      {reviewVod && <InteractiveVodReviewModal vod={reviewVod} onClose={() => setReviewVod(null)} />}
+      {reviewVod && <InteractiveVodReviewModal vod={reviewVod} onClose={() => setReviewVod(null)} onToast={setToast} />}
 
       <input ref={importInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
       {toast && <div className="toast"><Check size={16} /><span>{toast}</span><button aria-label="Fechar aviso" onClick={() => setToast('')}><X size={14} /></button></div>}
@@ -1076,9 +1076,9 @@ function ResultBadge({ result }) {
   return <span className={`result-badge ${type}`}><span />{result || '—'}</span>;
 }
 
-function VodCard({ vod, gameplan, onEdit, onDelete, onOpen, onReview }) {
+function VodCard({ vod, gameplan, onEdit, onDelete, onOpen, onReview, onCopyDiscord }) {
   const duels = Array.isArray(vod.openingDuels) ? vod.openingDuels : [];
-  return <article className="vod-card"><div className="vod-card-symbol"><FileVideo2 size={22} /></div><div className="vod-card-main"><div className="vod-card-title-row"><h3>{vod.title}</h3><ResultBadge result={vod.result} /></div><div className="vod-meta-row"><span><MapIcon size={14} /> {vod.map}</span><span><Crosshair size={14} /> {vod.agent}</span><span><Swords size={14} /> {Number(vod.kills) || 0} abates</span><span>{Number(vod.deaths) || 0} mortes</span><span>{Number(vod.assists) || 0} assistências</span>{vod.roundsWon != null && vod.roundsLost != null && <span><Trophy size={14} /> {vod.roundsWon} × {vod.roundsLost}</span>}<span><BookOpen size={14} /> {formatDate(vod.date)}</span></div>{duels.length > 0 && <div className="opening-duel-summary"><strong>Eventos de abertura · {duels.length}</strong><div>{duels.map((item, i) => <span key={i}><b>{item.event}</b> · R{item.round || '?'}{item.time ? ` · ${item.time}` : ''}{item.player ? ` · ${item.player}` : ''}</span>)}</div></div>}{gameplan && <p className="vod-notes"><strong>Gameplan:</strong> {gameplan.name} · {gameplan.side}</p>}{vod.gamePlan && <p className="vod-notes"><strong>Notas de estratégia:</strong> {vod.gamePlan}</p>}{vod.notes && <p className="vod-notes">{vod.notes}</p>}<div className="vod-card-actions">{(vod.localVideoPath || vod.analysisData) && <button className="button button-primary button-small" onClick={onReview}><Play size={14} /> Review do Treino</button>}{vod.link && <button className="button button-secondary button-small" onClick={onOpen}><ExternalLink size={14} /> Abrir VOD</button>}<button className="button button-quiet button-small" onClick={onEdit}><Pencil size={14} /> Editar</button><button className="button button-danger-quiet button-small" onClick={onDelete}><Trash2 size={14} /> Excluir</button></div></div></article>;
+  return <article className="vod-card"><div className="vod-card-symbol"><FileVideo2 size={22} /></div><div className="vod-card-main"><div className="vod-card-title-row"><h3>{vod.title}</h3><ResultBadge result={vod.result} /></div><div className="vod-meta-row"><span><MapIcon size={14} /> {vod.map}</span><span><Crosshair size={14} /> {vod.agent}</span><span><Swords size={14} /> {Number(vod.kills) || 0} abates</span><span>{Number(vod.deaths) || 0} mortes</span><span>{Number(vod.assists) || 0} assistências</span>{vod.roundsWon != null && vod.roundsLost != null && <span><Trophy size={14} /> {vod.roundsWon} × {vod.roundsLost}</span>}<span><BookOpen size={14} /> {formatDate(vod.date)}</span></div>{duels.length > 0 && <div className="opening-duel-summary"><strong>Eventos de abertura · {duels.length}</strong><div>{duels.map((item, i) => <span key={i}><b>{item.event}</b> · R{item.round || '?'}{item.time ? ` · ${item.time}` : ''}{item.player ? ` · ${item.player}` : ''}</span>)}</div></div>}{gameplan && <p className="vod-notes"><strong>Gameplan:</strong> {gameplan.name} · {gameplan.side}</p>}{vod.gamePlan && <p className="vod-notes"><strong>Notas de estratégia:</strong> {vod.gamePlan}</p>}{vod.notes && <p className="vod-notes">{vod.notes}</p>}<div className="vod-card-actions">{(vod.localVideoPath || vod.analysisData) && <button className="button button-primary button-small" onClick={onReview}><Play size={14} /> Review do Treino</button>}{vod.analysisData && onCopyDiscord && <button type="button" className="button button-quiet button-small" onClick={() => onCopyDiscord(vod)} title="Copiar resumo formatado para colar no Discord"><ClipboardPaste size={14} /> Discord</button>}{vod.link && <button className="button button-secondary button-small" onClick={onOpen}><ExternalLink size={14} /> Abrir VOD</button>}<button className="button button-quiet button-small" onClick={onEdit}><Pencil size={14} /> Editar</button><button className="button button-danger-quiet button-small" onClick={onDelete}><Trash2 size={14} /> Excluir</button></div></div></article>;
 }
 
 function LineupCard({ lineup, onEdit, onDelete, onOpen }) {
@@ -1151,10 +1151,72 @@ function Modal({ title, subtitle, onClose, children }) {
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><h2 id="modal-title">{title}</h2><p>{subtitle}</p></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={18} /></button></div>{children}</div></div>;
 }
 
-function InteractiveVodReviewModal({ vod, onClose }) {
+function formatDiscordReport(vod) {
+  const analysis = vod.analysisData || {};
+  const stats = analysis.players_stats || {};
+  const allKills = analysis.all_kills || [];
+  
+  const scoreFriendly = vod.roundsWon ?? (analysis.final_score?.friendly ?? '?');
+  const scoreEnemy = vod.roundsLost ?? (analysis.final_score?.enemy ?? '?');
+  const mapName = vod.map || 'Valorant';
+  const resultLabel = vod.result || (scoreFriendly > scoreEnemy ? 'Vitória' : scoreFriendly < scoreEnemy ? 'Derrota' : 'Empate');
+  const resultEmoji = resultLabel === 'Vitória' ? '🏆' : resultLabel === 'Derrota' ? '❌' : '🤝';
+  
+  const sortedPlayers = Object.entries(stats).sort((a, b) => (b[1].kills || 0) - (a[1].kills || 0));
+  const friendlyPlayers = sortedPlayers.filter(([_, s]) => s.team === 'friendly');
+  const enemyPlayers = sortedPlayers.filter(([_, s]) => s.team === 'enemy');
+  
+  const topFragger = friendlyPlayers[0];
+  const totalHs = allKills.filter((k) => k.headshot && k.killer_team === 'friendly').length;
+  const totalFk = allKills.filter((k) => k.first_kill && k.killer_team === 'friendly').length;
+
+  let text = `${resultEmoji} **RELATÓRIO DE SCRIM — KRING VLR**\n`;
+  text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  text += `📍 **Mapa:** \`${mapName}\` | ⚔️ **Placar:** **${resultLabel}** (\`${scoreFriendly} × ${scoreEnemy}\`)\n`;
+  if (vod.title) text += `🎯 **Treino:** *${vod.title}*\n`;
+  text += `\n`;
+
+  if (topFragger) {
+    text += `🔥 **MVP Aliado:** **${topFragger[0]}** (${topFragger[1].agent || '—'}) — **${topFragger[1].kills}K** / **${topFragger[1].deaths}D** (KD: \`${topFragger[1].kd_ratio}x\`)\n`;
+  }
+  if (totalFk > 0 || totalHs > 0) {
+    text += `⚡ **First Kills Aliados:** \`${totalFk}\` | 🎯 **Headshots:** \`${totalHs} HS\`\n`;
+  }
+  text += `\n`;
+
+  if (friendlyPlayers.length > 0) {
+    text += `👥 **Estatísticas do Time (Aliados):**\n\`\`\`\n`;
+    text += `JOGADOR          AGENTE       K / D     K/D      HS%\n`;
+    text += `----------------------------------------------------\n`;
+    friendlyPlayers.forEach(([name, s]) => {
+      const pName = name.padEnd(16, ' ').slice(0, 16);
+      const pAgent = (s.agent || '—').padEnd(12, ' ').slice(0, 12);
+      const pKd = `${s.kills}/${s.deaths}`.padEnd(9, ' ');
+      const pRatio = `${s.kd_ratio}x`.padEnd(8, ' ');
+      const pHs = `${s.headshot_rate}%`;
+      text += `${pName} ${pAgent} ${pKd} ${pRatio} ${pHs}\n`;
+    });
+    text += `\`\`\`\n`;
+  }
+
+  if (enemyPlayers.length > 0) {
+    text += `💀 **Top Adversários:**\n\`\`\`\n`;
+    enemyPlayers.slice(0, 3).forEach(([name, s]) => {
+      text += `• ${name} (${s.agent || '—'}): ${s.kills}K / ${s.deaths}D (${s.kd_ratio}x)\n`;
+    });
+    text += `\`\`\`\n`;
+  }
+
+  text += `*Gerado pelo painel Kring VLR*`;
+  return text;
+}
+
+function InteractiveVodReviewModal({ vod, onClose, onToast }) {
   const videoRef = useRef(null);
   const [selectedRound, setSelectedRound] = useState(0); // 0 = all
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'scoreboard'
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [activeKill, setActiveKill] = useState(null);
 
   const videoUrl = window.kringAPI?.toLocalVideoUrl && vod.localVideoPath
     ? window.kringAPI.toLocalVideoUrl(vod.localVideoPath)
@@ -1169,10 +1231,22 @@ function InteractiveVodReviewModal({ vod, onClose }) {
     ? allKills
     : (rounds.find((r) => r.round_number === selectedRound)?.kills || []);
 
-  const seekTo = (seconds) => {
+  const changeSpeed = (rate) => {
+    setPlaybackRate(rate);
+    if (videoRef.current) videoRef.current.playbackRate = rate;
+  };
+
+  const seekRelative = (delta) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime + delta);
+    }
+  };
+
+  const seekTo = (seconds, killItem = null) => {
     if (videoRef.current && Number.isFinite(seconds)) {
-      videoRef.current.currentTime = Math.max(0, seconds - 1.5);
+      videoRef.current.currentTime = Math.max(0, seconds - 4); // 4 seconds pre-roll
       videoRef.current.play().catch(() => {});
+      if (killItem) setActiveKill(killItem);
     }
   };
 
@@ -1181,6 +1255,16 @@ function InteractiveVodReviewModal({ vod, onClose }) {
     const parts = str.split(':');
     if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
     return 0;
+  };
+
+  const copyDiscord = async () => {
+    try {
+      const text = formatDiscordReport(vod);
+      await navigator.clipboard.writeText(text);
+      if (onToast) onToast('📋 Relatório copiado para a área de transferência! Cole no Discord.');
+    } catch {
+      if (onToast) onToast('Não foi possível copiar o relatório.');
+    }
   };
 
   return (
@@ -1195,7 +1279,17 @@ function InteractiveVodReviewModal({ vod, onClose }) {
               {vod.result} ({vod.roundsWon ?? '—'} × {vod.roundsLost ?? '—'})
             </span>
           </h2>
-          <button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={18} /></button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="button button-secondary button-small"
+              onClick={copyDiscord}
+              title="Copiar relatório formatado para o Discord"
+            >
+              <ClipboardPaste size={14} /> Copiar p/ Discord
+            </button>
+            <button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={18} /></button>
+          </div>
         </header>
 
         <div className="review-modal-body">
@@ -1211,8 +1305,30 @@ function InteractiveVodReviewModal({ vod, onClose }) {
               )}
             </div>
             <div className="review-video-controls">
-              <span><Clock size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Clique em qualquer evento de abate para sincronizar a reprodução instantaneamente.</span>
-              <span style={{ fontFamily: 'monospace' }}>{vod.localVideoPath ? vod.localVideoPath.split(/[\/\\]/).pop() : ''}</span>
+              <div className="video-controls-actions">
+                <button type="button" className="speed-chip" onClick={() => seekRelative(-5)} title="Voltar 5 segundos">
+                  <RotateCcw size={12} /> -5s
+                </button>
+                <button type="button" className="speed-chip" onClick={() => seekRelative(5)} title="Avançar 5 segundos">
+                  +5s
+                </button>
+                <div className="speed-group">
+                  <span className="speed-label">Velocidade:</span>
+                  {[0.5, 0.75, 1.0, 1.25, 1.5].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`speed-chip ${playbackRate === s ? 'active' : ''}`}
+                      onClick={() => changeSpeed(s)}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="video-controls-info">
+                <span><Clock size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Clique no abate para saltar (-4s de setup)</span>
+              </div>
             </div>
           </div>
 
@@ -1258,9 +1374,9 @@ function InteractiveVodReviewModal({ vod, onClose }) {
                     displayedKills.map((k, i) => (
                       <div
                         key={i}
-                        className="review-event-card"
-                        onClick={() => seekTo(k.timestamp_sec ?? parseTimeToSeconds(k.time))}
-                        title="Clique para ir para este segundo no vídeo"
+                        className={`review-event-card ${activeKill === k ? 'active-playing' : ''}`}
+                        onClick={() => seekTo(k.timestamp_sec ?? parseTimeToSeconds(k.time), k)}
+                        title="Clique para ir para este lance no vídeo (-4s de setup)"
                       >
                         <div className="review-event-left">
                           <span className="review-time-badge">{k.time}</span>
@@ -1285,7 +1401,7 @@ function InteractiveVodReviewModal({ vod, onClose }) {
                               <Zap size={10} /> 1st Kill
                             </span>
                           )}
-                          <Play size={13} style={{ color: '#65aaff', opacity: 0.8 }} />
+                          <Play size={13} style={{ color: activeKill === k ? '#38bdf8' : '#65aaff', opacity: activeKill === k ? 1 : 0.8 }} />
                         </div>
                       </div>
                     ))

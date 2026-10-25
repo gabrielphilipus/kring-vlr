@@ -100,13 +100,44 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
   }
 
   return new Promise((resolve, reject) => {
-    const analyzerScript = path.join(app.getAppPath(), 'analyzer', 'analyzer.py');
-    const args = [analyzerScript, '--video', videoPath];
-    if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
-    if (userNick) args.push('--user-nick', String(userNick));
-    if (userAgent) args.push('--user-agent', String(userAgent));
+    // Check if a compiled standalone analyzer binary exists (so Python is not required)
+    const possibleBinaries = [
+      path.join(app.getAppPath(), 'analyzer', 'dist', 'analyzer.exe'),
+      path.join(app.getAppPath(), 'analyzer', 'analyzer.exe'),
+      path.join(process.resourcesPath || '', 'analyzer', 'analyzer.exe'),
+      path.join(process.resourcesPath || '', 'analyzer.exe'),
+    ];
 
-    const pythonProcess = spawn('python', args, {
+    let standaloneExe = null;
+    const fsSync = require('node:fs');
+    for (const bin of possibleBinaries) {
+      try {
+        if (fsSync.existsSync(bin)) {
+          standaloneExe = bin;
+          break;
+        }
+      } catch {}
+    }
+
+    let command;
+    let args;
+
+    if (standaloneExe) {
+      command = standaloneExe;
+      args = ['--video', videoPath];
+      if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
+      if (userNick) args.push('--user-nick', String(userNick));
+      if (userAgent) args.push('--user-agent', String(userAgent));
+    } else {
+      command = process.platform === 'win32' ? 'python' : 'python3';
+      const analyzerScript = path.join(app.getAppPath(), 'analyzer', 'analyzer.py');
+      args = [analyzerScript, '--video', videoPath];
+      if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
+      if (userNick) args.push('--user-nick', String(userNick));
+      if (userAgent) args.push('--user-agent', String(userAgent));
+    }
+
+    const pythonProcess = spawn(command, args, {
       cwd: app.getAppPath(),
       env: { ...process.env, PYTHONUNBUFFERED: '1' }
     });
@@ -159,7 +190,11 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
 
     pythonProcess.on('error', (err) => {
       currentAnalyzerProcess = null;
-      resolve({ ok: false, error: err.message });
+      let msg = err.message;
+      if (err.code === 'ENOENT') {
+        msg = 'Python não foi encontrado no sistema. Para analisar vídeos sem Python instalado, compile o executável analyzer.exe ou instale o Python marcando "Add Python to PATH".';
+      }
+      resolve({ ok: false, error: msg });
     });
   });
 });
