@@ -24,9 +24,114 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow;
 let currentAnalyzerProcess = null;
 const dataFile = () => path.join(app.getPath('userData'), 'kring-vlr-data.json');
-const backupFile = () => path.join(app.getPath('userData'), 'kring-vlr-data.json.bak');
 const emptyData = () => ({ vods: [], lineups: [], tactics: [], training: [], gameplans: [], schemaVersion: 3 });
 const seedFile = () => path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public', 'catalogs.json');
+
+let lastRotatingBackupTime = 0;
+const ROTATING_BACKUP_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_ROTATING_BACKUPS = 7;
+
+function getRotatingBackupName() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const MM = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const HH = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return `kring-vlr-data.${yyyy}${MM}${dd}-${HH}${mm}.bak`;
+}
+
+async function rotateBackups() {
+  const dir = app.getPath('userData');
+  try {
+    const files = await fs.readdir(dir);
+    const backupFiles = files
+      .filter((f) => /^kring-vlr-data\.\d{8}-\d{4}\.bak$/.test(f))
+      .map((f) => path.join(dir, f));
+
+    if (backupFiles.length > MAX_ROTATING_BACKUPS) {
+      const filesWithStats = await Promise.all(
+        backupFiles.map(async (filePath) => {
+          try {
+            const stat = await fs.stat(filePath);
+            return { filePath, mtime: stat.mtimeMs };
+          } catch {
+            return { filePath, mtime: 0 };
+          }
+        })
+      );
+
+      filesWithStats.sort((a, b) => b.mtime - a.mtime);
+      const toDelete = filesWithStats.slice(MAX_ROTATING_BACKUPS);
+      for (const item of toDelete) {
+        try {
+          await fs.unlink(item.filePath);
+          console.info('[rotateBackups] Backup antigo removido:', path.basename(item.filePath));
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.error('[rotateBackups] Erro ao rotacionar backups:', err);
+  }
+}
+
+async function createRotatingBackupIfNeeded(force = false) {
+  const now = Date.now();
+  if (!force && (now - lastRotatingBackupTime < ROTATING_BACKUP_INTERVAL_MS)) {
+    return;
+  }
+  const file = dataFile();
+  const dir = app.getPath('userData');
+  try {
+    const content = await fs.readFile(file, 'utf8');
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.vods)) {
+      const backupPath = path.join(dir, getRotatingBackupName());
+      await fs.copyFile(file, backupPath);
+      lastRotatingBackupTime = now;
+      console.info('[createRotatingBackup] Backup rotativo criado:', path.basename(backupPath));
+      await rotateBackups();
+    }
+  } catch {}
+}
+
+async function findLatestValidBackup() {
+  const dir = app.getPath('userData');
+  try {
+    const files = await fs.readdir(dir);
+    const candidates = files
+      .filter((f) => f === 'kring-vlr-data.json.bak' || /^kring-vlr-data\.\d{8}-\d{4}\.bak$/.test(f))
+      .map((f) => path.join(dir, f));
+
+    if (!candidates.length) return null;
+
+    const filesWithStats = await Promise.all(
+      candidates.map(async (filePath) => {
+        try {
+          const stat = await fs.stat(filePath);
+          return { filePath, mtime: stat.mtimeMs };
+        } catch {
+          return { filePath, mtime: 0 };
+        }
+      })
+    );
+
+    filesWithStats.sort((a, b) => b.mtime - a.mtime);
+
+    for (const item of filesWithStats) {
+      try {
+        const content = await fs.readFile(item.filePath, 'utf8');
+        if (content && content.trim().length > 0) {
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === 'object' && Array.isArray(parsed.vods)) {
+            return { filePath: item.filePath, parsed };
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
 
 async function loadCatalogSeed() {
   try {
@@ -51,7 +156,6 @@ function formatDataPayload(parsed, seed) {
 
 async function loadData() {
   const file = dataFile();
-  const bak = backupFile();
   const seed = await loadCatalogSeed();
 
   let fileContent = null;
@@ -67,8 +171,19 @@ async function loadData() {
     }
   }
 
-  // 1. Arquivo não existe ainda (primeira execução limpa): retorna dados padrão/seed
+  // 1. Arquivo principal não existe (ENOENT)
   if (!fileExists) {
+    const backupCandidate = await findLatestValidBackup();
+    if (backupCandidate) {
+      console.warn(`[loadData] Arquivo principal ausente (ENOENT), mas backup válido encontrado: ${backupCandidate.filePath}`);
+      return {
+        ok: true,
+        recoveredFromBackup: true,
+        backupSource: path.basename(backupCandidate.filePath),
+        ...formatDataPayload(backupCandidate.parsed, seed),
+      };
+    }
+    // Nenhum backup existe: primeira execução limpa do app
     return { ok: true, isNew: true, ...emptyData(), ...seed };
   }
 
@@ -87,30 +202,18 @@ async function loadData() {
     console.error('[loadData] Arquivo de dados principal ilegível/corrompido:', parseErr.message);
   }
 
-  // Se o JSON principal for válido, retorna com sucesso
+  // Se o JSON principal for válido, agenda backup rotativo na inicialização e retorna com sucesso
   if (parsed) {
+    createRotatingBackupIfNeeded(true).catch(() => {});
     return { ok: true, ...formatDataPayload(parsed, seed) };
   }
 
-  // 3. O arquivo principal falhou! Tentar carregar do backup (.bak)
-  console.warn('[loadData] Tentando recuperação via arquivo de backup (.bak)...');
-  let backupContent = null;
-  let backupParsed = null;
+  // 3. O arquivo principal falhou! Tentar carregar do backup válido mais recente
+  console.warn('[loadData] Tentando recuperação via backups disponíveis...');
+  const latestBackup = await findLatestValidBackup();
 
-  try {
-    backupContent = await fs.readFile(bak, 'utf8');
-    if (backupContent && backupContent.trim().length > 0) {
-      backupParsed = JSON.parse(backupContent);
-      if (typeof backupParsed !== 'object' || backupParsed === null) {
-        backupParsed = null;
-      }
-    }
-  } catch (bakErr) {
-    console.error('[loadData] Backup (.bak) indisponível ou inválido:', bakErr.message);
-  }
-
-  if (backupParsed) {
-    console.info('[loadData] Dados recuperados com sucesso a partir do backup (.bak)!');
+  if (latestBackup) {
+    console.info(`[loadData] Dados recuperados com sucesso a partir de ${latestBackup.filePath}`);
     const timestamp = Date.now();
     const corruptedPreserved = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
     try {
@@ -121,7 +224,8 @@ async function loadData() {
       ok: true,
       recoveredFromBackup: true,
       corruptedPreservedAs: path.basename(corruptedPreserved),
-      ...formatDataPayload(backupParsed, seed),
+      backupSource: path.basename(latestBackup.filePath),
+      ...formatDataPayload(latestBackup.parsed, seed),
     };
   }
 
@@ -148,20 +252,10 @@ ipcMain.handle('data:save', async (_event, data) => {
     throw new Error('Formato de dados inválido.');
   }
   const file = dataFile();
-  const bak = backupFile();
   const temp = `${file}.tmp`;
 
-  // Antes de gravar, se o arquivo atual for um JSON válido, copie-o para .bak.
-  // Se o arquivo atual for inválido, NÃO sobrescreva o .bak!
-  try {
-    const existingContent = await fs.readFile(file, 'utf8');
-    const existingParsed = JSON.parse(existingContent);
-    if (existingParsed && typeof existingParsed === 'object' && Array.isArray(existingParsed.vods)) {
-      await fs.copyFile(file, bak);
-    }
-  } catch {
-    // Arquivo atual não existe ainda ou está corrompido: preserva o .bak intacto
-  }
+  // Backup rotativo executado no máximo a cada 30 minutos sem re-ler o arquivo em todo salvamento
+  await createRotatingBackupIfNeeded(false);
 
   const payload = {
     ...data,
@@ -176,6 +270,16 @@ ipcMain.handle('data:save', async (_event, data) => {
   await fs.writeFile(temp, JSON.stringify(payload, null, 2), 'utf8');
   await fs.rename(temp, file);
   return { ok: true };
+});
+
+ipcMain.handle('userData:open-folder', async () => {
+  try {
+    const userDir = app.getPath('userData');
+    await shell.openPath(userDir);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message };
+  }
 });
 
 ipcMain.handle('external:open', async (_event, url) => {
@@ -240,10 +344,22 @@ const ALLOWED_VIDEO_EXTS = new Set(['.mp4', '.mkv', '.webm', '.mov', '.avi']);
 function terminateProcessTree(proc) {
   if (!proc || !proc.pid) return;
   const pid = proc.pid;
+  if (proc._timeoutTimer) {
+    clearTimeout(proc._timeoutTimer);
+    proc._timeoutTimer = null;
+  }
   try {
     if (process.platform === 'win32') {
       const { execSync } = require('node:child_process');
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+      try {
+        execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'pipe' });
+      } catch (err) {
+        const msg = (err?.stderr ? err.stderr.toString() : err?.message) || '';
+        // Não lançar exceção. Só registrar se não for processo já finalizado
+        if (!msg.toLowerCase().includes('not found') && !msg.toLowerCase().includes('não encontrado')) {
+          console.warn(`[terminateProcessTree] Aviso ao encerrar PID ${pid}:`, msg.trim());
+        }
+      }
     } else {
       proc.kill('SIGTERM');
       setTimeout(() => {
@@ -260,11 +376,14 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     currentAnalyzerProcess = null;
   }
 
-  // 1. Validar que videoPath é string, existe e possui extensão permitida
+  // 1. Validar que videoPath é string, existe, é absoluto e não é caminho UNC
   if (typeof videoPath !== 'string' || !videoPath.trim()) {
     return { ok: false, error: 'Caminho do arquivo de vídeo inválido ou não fornecido.' };
   }
   const normVideoPath = path.normalize(videoPath.trim());
+  if (normVideoPath.startsWith('\\\\') || normVideoPath.startsWith('//')) {
+    return { ok: false, error: 'Caminhos de rede UNC não são permitidos por segurança.' };
+  }
   if (!path.isAbsolute(normVideoPath)) {
     return { ok: false, error: 'O caminho do vídeo deve ser um caminho absoluto.' };
   }
@@ -338,14 +457,14 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
 
     currentAnalyzerProcess = pythonProcess;
 
-    // 2. Timeout configurável para a análise (padrão generoso de 45 minutos)
+    // 2. Timeout configurável associado ao processo específico
     const DEFAULT_TIMEOUT_MS = 45 * 60 * 1000;
     const timeoutDuration = (Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0)
       ? Number(timeoutMs)
       : DEFAULT_TIMEOUT_MS;
 
-    const timeoutTimer = setTimeout(() => {
-      if (currentAnalyzerProcess === pythonProcess) {
+    pythonProcess._timeoutTimer = setTimeout(() => {
+      if (currentAnalyzerProcess === pythonProcess && !pythonProcess.killed) {
         const timeoutMsg = `Tempo limite de análise excedido (${Math.round(timeoutDuration / 60000)} minutos). O processo foi encerrado para evitar travamento.`;
         console.warn(`[vod:start-analysis] ${timeoutMsg}`);
         mainWindow?.webContents.send('vod:error', timeoutMsg);
@@ -354,6 +473,16 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
         resolve({ ok: false, error: timeoutMsg });
       }
     }, timeoutDuration);
+
+    const cleanupAnalysis = () => {
+      if (pythonProcess._timeoutTimer) {
+        clearTimeout(pythonProcess._timeoutTimer);
+        pythonProcess._timeoutTimer = null;
+      }
+      if (currentAnalyzerProcess === pythonProcess) {
+        currentAnalyzerProcess = null;
+      }
+    };
 
     let finalResult = null;
     let reportedError = null;
@@ -392,8 +521,7 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     });
 
     pythonProcess.on('close', (code) => {
-      clearTimeout(timeoutTimer);
-      currentAnalyzerProcess = null;
+      cleanupAnalysis();
       if (reportedError) {
         resolve({ ok: false, error: reportedError });
       } else if (code === 0 && finalResult) {
@@ -416,8 +544,7 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     });
 
     pythonProcess.on('error', (err) => {
-      clearTimeout(timeoutTimer);
-      currentAnalyzerProcess = null;
+      cleanupAnalysis();
       let msg = err.message;
       if (err.code === 'ENOENT') {
         msg = 'Python não foi encontrado no sistema. Para analisar vídeos sem Python instalado, compile o executável analyzer.exe ou instale o Python marcando "Add Python to PATH".';
@@ -486,9 +613,9 @@ app.whenReady().then(() => {
         targetPath = raw;
       }
 
-      // 1. Rejeitar caminhos não absolutos e normalizar
-      if (!targetPath || !path.isAbsolute(targetPath)) {
-        return new Response('Caminho de vídeo inválido ou não absoluto.', { status: 400 });
+      // 1. Rejeitar caminhos não absolutos e caminhos de rede UNC
+      if (!targetPath || !path.isAbsolute(targetPath) || targetPath.startsWith('\\\\') || targetPath.startsWith('//')) {
+        return new Response('Caminho de vídeo inválido, não absoluto ou caminho UNC de rede não permitido.', { status: 400 });
       }
       targetPath = path.normalize(targetPath);
 

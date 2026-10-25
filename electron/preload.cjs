@@ -33,4 +33,5 @@ contextBridge.exposeInMainWorld('kringAPI', {
   },
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   quitAndInstallUpdate: () => ipcRenderer.invoke('updater:quit-and-install'),
+  openUserDataFolder: () => ipcRenderer.invoke('userData:open-folder'),
 });

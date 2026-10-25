@@ -178,7 +178,8 @@ function App() {
         }
 
         if (loaded?.recoveredFromBackup) {
-          setToast('🛡️ AVISO: Dados restaurados com sucesso a partir da cópia de segurança (.bak).');
+          const src = loaded.backupSource ? ` (${loaded.backupSource})` : '';
+          setToast(`🛡️ AVISO: Dados restaurados com sucesso a partir da cópia de segurança${src}.`);
         }
 
         let seed = { maps: [], agents: [] };
@@ -203,6 +204,28 @@ function App() {
     })();
     return () => { active = false; };
   }, []);
+
+  const handleStartFromScratch = () => {
+    const confirmed = window.confirm(
+      'Tem certeza de que deseja começar do zero?\n\n' +
+      'Seu arquivo danificado permanecerá preservado com segurança na pasta do aplicativo, ' +
+      'mas uma nova base limpa será criada e o salvamento automático será reativado.'
+    );
+    if (!confirmed) return;
+
+    setDataLoadError(null);
+    setData({
+      vods: [],
+      lineups: [],
+      tactics: [],
+      training: [],
+      gameplans: [],
+      maps: data.maps.length ? data.maps : [],
+      agents: data.agents.length ? data.agents : [],
+    });
+    setReady(true); // LIBERA o auto-save apenas após a confirmação explícita do usuário
+    setToast('Nova base iniciada com sucesso. Arquivo anterior preservado na pasta de dados.');
+  };
 
   useEffect(() => {
     if (!ready) return undefined;
@@ -735,11 +758,29 @@ function App() {
         </header>
 
         {dataLoadError && (
-          <div className="updater-banner error" style={{ background: '#7f1d1d', borderColor: '#ef4444', color: '#fff' }}>
-            <div className="updater-content">
+          <div className="updater-banner error" style={{ background: '#7f1d1d', borderColor: '#ef4444', color: '#fff', flexDirection: 'column', alignItems: 'flex-start', gap: 10, padding: '14px 18px' }}>
+            <div className="updater-content" style={{ width: '100%' }}>
               <span className="updater-msg">
                 ⚠️ <strong>Atenção:</strong> O arquivo de dados local estava ilegível/corrompido. O salvamento automático foi <strong>bloqueado</strong> para proteger suas informações. O arquivo original corrompido foi preservado como <code>{dataLoadError.preservedAs}</code> na pasta de dados do sistema.
               </span>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 2, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                onClick={() => window.kringAPI?.openUserDataFolder?.()}
+                style={{ background: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.35)', color: '#fff' }}
+              >
+                <FolderOpen size={14} /> Abrir pasta dos dados
+              </button>
+              <button
+                type="button"
+                className="button button-small"
+                onClick={handleStartFromScratch}
+                style={{ background: '#dc2626', borderColor: '#b91c1c', color: '#fff' }}
+              >
+                Começar do zero
+              </button>
             </div>
           </div>
         )}
