@@ -1,0 +1,95 @@
+{
+  "customRootMeta": "valorant-custom-v1",
+  "vods": [
+    {
+      "title": "VOD com strings vazias e espacos",
+      "map": "fracture",
+      "agent": "KAY/O",
+      "roundsWon": "",
+      "roundsLost": "   ",
+      "kills": "15",
+      "deaths": "10",
+      "assists": "5",
+      "gamePlan": "Estratégia legada v1",
+      "extraVodNote": "observacao_extra"
+    },
+    {
+      "id": "vod-2",
+      "title": "VOD com strings numericas",
+      "map": "HAVEN",
+      "agent": "jett",
+      "roundsWon": "13",
+      "roundsLost": "7",
+      "kills": "0",
+      "deaths": "abc",
+      "assists": ""
+    },
+    {
+      "id": "vod-3",
+      "title": "VOD com numeros ja corretos",
+      "map": "Ascent",
+      "agent": "Omen",
+      "roundsWon": 13,
+      "roundsLost": 7,
+      "kills": 20,
+      "deaths": 12,
+      "assists": 8
+    },
+    {
+      "id": "vod-4",
+      "title": "VOD com valores nulos",
+      "map": "MapaInexistente",
+      "agent": "AgenteInexistente",
+      "roundsWon": null,
+      "roundsLost": null
+    },
+    {
+      "id": "vod-5",
+      "title": "VOD com rounds omitidos e strings invalidas",
+      "map": "Ascent",
+      "agent": "Jett",
+      "roundsWon": "abc",
+      "roundsLost": "xyz"
+    }
+  ],
+  "lineups": [
+    {
+      "title": "Lineup sem id e com mapa em minusculas",
+      "map": "fracture",
+      "agent": "KAY/O",
+      "customLineupFlag": true
+    },
+    {
+      "id": "l-2",
+      "title": "Lineup com mapa inexistente",
+      "map": "MapaInexistente",
+      "agent": "AgenteInexistente"
+    }
+  ],
+  "tactics": null,
+  "training": [
+    {
+      "title": "Treino sem id, minutes decimal como string e done ausente",
+      "minutes": "1.5"
+    },
+    {
+      "id": "tr-2",
+      "title": "Treino com done true e minutes numero",
+      "minutes": 30,
+      "done": true
+    }
+  ],
+  "maps": [
+    {
+      "name": "Mapa Custom sem ID",
+      "previewUrl": ""
+    }
+  ],
+  "agents": [
+    {
+      "name": "Agente Custom sem ID",
+      "role": "Duelista",
+      "iconUrl": ""
+    }
+  ]
+}
