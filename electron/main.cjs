@@ -66,7 +66,9 @@ async function rotateBackups() {
         try {
           await fs.unlink(item.filePath);
           console.info('[rotateBackups] Backup antigo removido:', path.basename(item.filePath));
-        } catch {}
+        } catch (unlinkErr) {
+          console.error('[rotateBackups] Falha ao excluir backup antigo:', item.filePath, unlinkErr);
+        }
       }
     }
   } catch (err) {
@@ -91,7 +93,11 @@ async function createRotatingBackupIfNeeded(force = false) {
       console.info('[createRotatingBackup] Backup rotativo criado:', path.basename(backupPath));
       await rotateBackups();
     }
-  } catch {}
+  } catch (backupErr) {
+    if (backupErr?.code !== 'ENOENT') {
+      console.error('[createRotatingBackup] Erro ao ler dados para backup rotativo:', backupErr);
+    }
+  }
 }
 
 async function findLatestValidBackup() {
@@ -126,9 +132,13 @@ async function findLatestValidBackup() {
             return { filePath: item.filePath, parsed };
           }
         }
-      } catch {}
+      } catch (readBackupErr) {
+        console.error('[findLatestValidBackup] Backup inválido ou ilegível:', item.filePath, readBackupErr);
+      }
     }
-  } catch {}
+  } catch (scanErr) {
+    console.error('[findLatestValidBackup] Erro ao listar diretório de backups:', scanErr);
+  }
   return null;
 }
 
@@ -217,7 +227,9 @@ async function loadData() {
     const corruptedPreserved = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
     try {
       await fs.copyFile(file, corruptedPreserved);
-    } catch {}
+    } catch (copyErr) {
+      console.error('[loadData] Falha ao copiar arquivo corrompido para preservação:', copyErr);
+    }
 
     return {
       ok: true,
@@ -322,7 +334,9 @@ function resolvePython() {
   for (const c of candidates) {
     try {
       if (fsSync.existsSync(c)) return c;
-    } catch {}
+    } catch {
+      // Caminho de fallback inacessível ou sem permissão; continua a busca
+    }
   }
   return process.platform === 'win32' ? 'python' : 'python3';
 }
@@ -362,10 +376,16 @@ function terminateProcessTree(proc) {
     } else {
       proc.kill('SIGTERM');
       setTimeout(() => {
-        try { proc.kill('SIGKILL'); } catch {}
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // Seguro ignorar caso o processo já tenha encerrado após SIGTERM
+        }
       }, 800);
     }
-  } catch {}
+  } catch (killErr) {
+    console.error('[terminateProcessTree] Erro ao encerrar processo:', killErr);
+  }
 }
 
 // Start native computer vision analyzer process
@@ -419,7 +439,9 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
           standaloneExe = bin;
           break;
         }
-      } catch {}
+      } catch {
+        // Binário inexistente ou inacessível no caminho candidato; tenta o próximo
+      }
     }
 
     let command;
@@ -508,7 +530,9 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
           } else if (parsed.type === 'complete') {
             finalResult = parsed.data;
           }
-        } catch {}
+        } catch {
+          // Linha de stdout não é JSON (ex.: log do OpenCV/DirectML/RapidOCR); ignorar com segurança
+        }
       }
     });
 
@@ -584,7 +608,9 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       if (new URL(url).protocol === 'https:') shell.openExternal(url);
-    } catch {}
+    } catch {
+      // URL malformada ou inválida; ação negada por segurança
+    }
     return { action: 'deny' };
   });
 

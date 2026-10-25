@@ -182,7 +182,12 @@ function App() {
 
         let seed = { maps: [], agents: [] };
         if (!Array.isArray(loaded?.maps) || !Array.isArray(loaded?.agents)) {
-          try { const response = await fetch('./catalogs.json'); if (response.ok) seed = await response.json(); } catch {}
+          try {
+            const response = await fetch('./catalogs.json');
+            if (response.ok) seed = await response.json();
+          } catch {
+            // Fallback seguro se catalogs.json padrão estiver ausente/inacessível
+          }
         }
 
         setData({
