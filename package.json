@@ -14,7 +14,8 @@
     "lint:js": "eslint .",
     "lint:py": "ruff check analyzer/",
     "format:check": "prettier --check .",
-    "check": "npm test && npm run lint && npm run build && node --check electron/main.cjs electron/preload.cjs && python -m py_compile analyzer/analyzer.py",
+    "migrate:dry-run": "node scripts/migrate-dry-run.cjs",
+    "check": "npm test && npm run lint && npm run build && node --check electron/main.cjs electron/preload.cjs electron/migrations/v4.cjs scripts/migrate-dry-run.cjs && python -m py_compile analyzer/analyzer.py",
     "dist:win": "npm run build && electron-builder --win nsis",
     "dist:portable": "npm run build && electron-builder --win portable"
   },

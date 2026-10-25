@@ -44,7 +44,12 @@ module.exports = [
     },
   },
   {
-    files: ['electron/**/*.{js,cjs}', 'vite.config.js', 'eslint.config.js'],
+    files: [
+      'electron/**/*.{js,cjs}',
+      'scripts/**/*.{js,cjs}',
+      'vite.config.js',
+      'eslint.config.js',
+    ],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
