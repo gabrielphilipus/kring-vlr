@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('kringAPI', {
   loadData: () => ipcRenderer.invoke('data:load'),
   saveData: (data) => ipcRenderer.invoke('data:save', data),
+  importBackupData: (data) => ipcRenderer.invoke('data:import', data),
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   selectVideoFile: () => ipcRenderer.invoke('video:select'),
   startVodAnalysis: (videoPath, options) =>

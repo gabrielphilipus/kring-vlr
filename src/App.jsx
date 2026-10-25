@@ -231,18 +231,28 @@ function App() {
 
         if (!active) return;
 
-        // Se o carregamento indicar falha crítica de corrupção:
+        // Se o carregamento indicar falha crítica de integridade ou incompatibilidade de versão:
         if (loaded && loaded.ok === false) {
           console.error('[App] Falha crítica de integridade:', loaded);
           setDataLoadError(loaded);
-          setToast(
-            `⚠️ ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.`
-          );
+          if (loaded.reason === 'unsupported-version') {
+            setToast(
+              `⚠️ Versão de dados incompatível (schemaVersion ${loaded.currentVersion}). Atualize o Kring VLR.`
+            );
+          } else {
+            setToast(
+              `⚠️ ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.`
+            );
+          }
           // NÃO chama setReady(true), impedindo qualquer auto-save de rodar
           return;
         }
 
-        if (loaded?.recoveredFromBackup) {
+        if (loaded?.migratedV4) {
+          setToast(
+            '🛡️ Seus dados foram atualizados com sucesso para o formato v4 (cópia de segurança preservada).'
+          );
+        } else if (loaded?.recoveredFromBackup) {
           const src = loaded.backupSource ? ` (${loaded.backupSource})` : '';
           setToast(
             `🛡️ AVISO: Dados restaurados com sucesso a partir da cópia de segurança${src}.`
@@ -1126,12 +1136,28 @@ function App() {
         )
       )
         return;
+
+      let normalized = parsed;
+      if (window.kringAPI?.importBackupData) {
+        const result = await window.kringAPI.importBackupData(parsed);
+        if (!result?.ok) {
+          if (result?.reason === 'unsupported-version') {
+            setToast(
+              `Não foi possível importar: versão ${result.currentVersion} incompatível com esta versão do aplicativo.`
+            );
+            return;
+          }
+          throw new Error(result?.error || 'Erro ao importar backup');
+        }
+        normalized = result.data;
+      }
+
       setData((previous) => ({
         ...previous,
-        vods: parsed.vods,
-        lineups: parsed.lineups,
-        tactics: Array.isArray(parsed.tactics)
-          ? parsed.tactics.map((item) => ({
+        vods: normalized.vods,
+        lineups: normalized.lineups,
+        tactics: Array.isArray(normalized.tactics)
+          ? normalized.tactics.map((item) => ({
               ...item,
               category:
                 item.category === 'Roubo de ultimate'
@@ -1139,10 +1165,14 @@ function App() {
                   : item.category,
             }))
           : [],
-        training: Array.isArray(parsed.training) ? parsed.training : [],
-        gameplans: Array.isArray(parsed.gameplans) ? parsed.gameplans : [],
-        maps: Array.isArray(parsed.maps) ? parsed.maps : previous.maps,
-        agents: Array.isArray(parsed.agents) ? parsed.agents : previous.agents,
+        training: Array.isArray(normalized.training) ? normalized.training : [],
+        gameplans: Array.isArray(normalized.gameplans)
+          ? normalized.gameplans
+          : [],
+        maps: Array.isArray(normalized.maps) ? normalized.maps : previous.maps,
+        agents: Array.isArray(normalized.agents)
+          ? normalized.agents
+          : previous.agents,
       }));
       setToast('Cópia de segurança importada.');
     } catch {
@@ -1468,12 +1498,34 @@ function App() {
           >
             <div className="updater-content" style={{ width: '100%' }}>
               <span className="updater-msg">
-                ⚠️ <strong>Atenção:</strong> O arquivo de dados local estava
-                ilegível/corrompido. O salvamento automático foi{' '}
-                <strong>bloqueado</strong> para proteger suas informações. O
-                arquivo original corrompido foi preservado como{' '}
-                <code>{dataLoadError.preservedAs}</code> na pasta de dados do
-                sistema.
+                {dataLoadError.reason === 'unsupported-version' ? (
+                  <>
+                    ⚠️ <strong>Atenção:</strong> O arquivo de dados foi gerado
+                    por uma versão mais recente deste aplicativo (
+                    <code>schemaVersion {dataLoadError.currentVersion}</code>
+                    ). O salvamento automático foi <strong>
+                      bloqueado
+                    </strong>{' '}
+                    para evitar perda de dados. Atualize o Kring VLR para abrir
+                    este arquivo com total compatibilidade.
+                  </>
+                ) : dataLoadError.reason === 'migration-failed' ? (
+                  <>
+                    ⚠️ <strong>Atenção:</strong> Ocorreu uma falha ao atualizar
+                    seus dados para a versão 4. O salvamento automático foi{' '}
+                    <strong>bloqueado</strong> e o arquivo original foi mantido
+                    intacto.
+                  </>
+                ) : (
+                  <>
+                    ⚠️ <strong>Atenção:</strong> O arquivo de dados local estava
+                    ilegível/corrompido. O salvamento automático foi{' '}
+                    <strong>bloqueado</strong> para proteger suas informações. O
+                    arquivo original corrompido foi preservado como{' '}
+                    <code>{dataLoadError.preservedAs}</code> na pasta de dados
+                    do sistema.
+                  </>
+                )}
               </span>
             </div>
             <div
@@ -1497,18 +1549,20 @@ function App() {
               >
                 <FolderOpen size={14} /> Abrir pasta dos dados
               </button>
-              <button
-                type="button"
-                className="button button-small"
-                onClick={handleStartFromScratch}
-                style={{
-                  background: '#dc2626',
-                  borderColor: '#b91c1c',
-                  color: '#fff',
-                }}
-              >
-                Começar do zero
-              </button>
+              {dataLoadError.reason !== 'unsupported-version' && (
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={handleStartFromScratch}
+                  style={{
+                    background: '#dc2626',
+                    borderColor: '#b91c1c',
+                    color: '#fff',
+                  }}
+                >
+                  Começar do zero
+                </button>
+              )}
             </div>
           </div>
         )}

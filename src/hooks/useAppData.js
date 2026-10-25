@@ -98,20 +98,30 @@ export function useAppData({ onToast } = {}) {
 
         if (!active) return;
 
-        // Se o carregamento retornar falha crítica de corrupção:
+        // Se o carregamento retornar falha crítica de corrupção ou incompatibilidade de versão:
         if (loaded && loaded.ok === false) {
           console.error('[useAppData] Falha crítica de integridade:', loaded);
           setDataLoadError(loaded);
           if (onToast) {
-            onToast(
-              '⚠️ ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.'
-            );
+            if (loaded.reason === 'unsupported-version') {
+              onToast(
+                `⚠️ Versão de dados incompatível (schemaVersion ${loaded.currentVersion}). Atualize o aplicativo.`
+              );
+            } else {
+              onToast(
+                '⚠️ ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.'
+              );
+            }
           }
           // Bloqueia setReady(true) impedindo qualquer auto-save
           return;
         }
 
-        if (loaded?.recoveredFromBackup && onToast) {
+        if (loaded?.migratedV4 && onToast) {
+          onToast(
+            '🛡️ Seus dados foram atualizados com sucesso para o formato v4 (cópia de segurança preservada).'
+          );
+        } else if (loaded?.recoveredFromBackup && onToast) {
           const src = loaded.backupSource ? ` (${loaded.backupSource})` : '';
           onToast(
             `🛡️ AVISO: Dados restaurados com sucesso a partir da cópia de segurança${src}.`

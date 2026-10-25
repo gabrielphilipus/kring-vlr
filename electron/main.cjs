@@ -27,17 +27,29 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+const {
+  migrateV3ToV4,
+  DEFAULT_SUPPORTED_SCHEMA_VERSION,
+} = require('./migrations/v4.cjs');
+
 let mainWindow;
 let currentAnalyzerProcess = null;
-const dataFile = () =>
-  path.join(app.getPath('userData'), 'kring-vlr-data.json');
+
+function getDataDir() {
+  if (!app.isPackaged && process.env.KRING_DATA_DIR) {
+    return path.resolve(process.env.KRING_DATA_DIR);
+  }
+  return app.getPath('userData');
+}
+
+const dataFile = () => path.join(getDataDir(), 'kring-vlr-data.json');
 const emptyData = () => ({
   vods: [],
   lineups: [],
   tactics: [],
   training: [],
   gameplans: [],
-  schemaVersion: 3,
+  schemaVersion: 4,
 });
 const seedFile = () =>
   path.join(
@@ -61,7 +73,7 @@ function getRotatingBackupName() {
 }
 
 async function rotateBackups() {
-  const dir = app.getPath('userData');
+  const dir = getDataDir();
   try {
     const files = await fs.readdir(dir);
     const backupFiles = files
@@ -109,7 +121,7 @@ async function createRotatingBackupIfNeeded(force = false) {
     return;
   }
   const file = dataFile();
-  const dir = app.getPath('userData');
+  const dir = getDataDir();
   try {
     const content = await fs.readFile(file, 'utf8');
     const parsed = JSON.parse(content);
@@ -134,7 +146,7 @@ async function createRotatingBackupIfNeeded(force = false) {
 }
 
 async function findLatestValidBackup() {
-  const dir = app.getPath('userData');
+  const dir = getDataDir();
   try {
     const files = await fs.readdir(dir);
     const candidates = files
@@ -202,17 +214,81 @@ async function loadCatalogSeed() {
   }
 }
 
-function formatDataPayload(parsed, seed) {
+async function createPreMigrationBackup(originalFilePath) {
+  const dir = getDataDir();
+  const baseName = 'kring-vlr-data.pre-migration-v4.bak';
+  let targetPath = path.join(dir, baseName);
+
+  try {
+    const exists = await fs
+      .access(targetPath)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) {
+      targetPath = path.join(
+        dir,
+        `kring-vlr-data.pre-migration-v4.${Date.now()}.bak`
+      );
+    }
+    await fs.copyFile(originalFilePath, targetPath);
+    console.info(
+      `[migration] Backup pré-migração salvo em: ${path.basename(targetPath)}`
+    );
+    return targetPath;
+  } catch (err) {
+    console.error('[migration] Falha ao criar backup pré-migração:', err);
+    throw err;
+  }
+}
+
+function formatDataPayload(parsed, seed = { maps: [], agents: [] }) {
   return {
     ...parsed,
-    vods: Array.isArray(parsed.vods) ? parsed.vods : [],
-    lineups: Array.isArray(parsed.lineups) ? parsed.lineups : [],
-    tactics: Array.isArray(parsed.tactics) ? parsed.tactics : [],
-    training: Array.isArray(parsed.training) ? parsed.training : [],
-    gameplans: Array.isArray(parsed.gameplans) ? parsed.gameplans : [],
-    maps: Array.isArray(parsed.maps) ? parsed.maps : seed.maps,
-    agents: Array.isArray(parsed.agents) ? parsed.agents : seed.agents,
-    schemaVersion: parsed.schemaVersion || 3,
+    vods: Array.isArray(parsed?.vods) ? parsed.vods : [],
+    lineups: Array.isArray(parsed?.lineups) ? parsed.lineups : [],
+    tactics: Array.isArray(parsed?.tactics) ? parsed.tactics : [],
+    training: Array.isArray(parsed?.training) ? parsed.training : [],
+    gameplans: Array.isArray(parsed?.gameplans) ? parsed.gameplans : [],
+    maps: Array.isArray(parsed?.maps) ? parsed.maps : seed.maps,
+    agents: Array.isArray(parsed?.agents) ? parsed.agents : seed.agents,
+    schemaVersion: 4,
+  };
+}
+
+function migrateAndNormalize(rawData, seed) {
+  const currentVersion = rawData?.schemaVersion;
+  if (
+    typeof currentVersion === 'number' &&
+    currentVersion > DEFAULT_SUPPORTED_SCHEMA_VERSION
+  ) {
+    return {
+      ok: false,
+      reason: 'unsupported-version',
+      currentVersion,
+      error: `Versão de dados incompatível: o arquivo possui schemaVersion ${currentVersion}, mas este aplicativo suporta até a versão ${DEFAULT_SUPPORTED_SCHEMA_VERSION}.`,
+    };
+  }
+
+  const needsMigration = !currentVersion || currentVersion < 4;
+  let migrated;
+  let stats = null;
+
+  if (needsMigration) {
+    const result = migrateV3ToV4(rawData, {
+      catalogs: seed && seed.maps && seed.agents ? seed : undefined,
+    });
+    migrated = result.migrated;
+    stats = result.stats;
+  } else {
+    migrated = { ...rawData };
+  }
+
+  const formatted = formatDataPayload(migrated, seed);
+  return {
+    ok: true,
+    data: formatted,
+    migratedV4: needsMigration,
+    stats,
   };
 }
 
@@ -240,14 +316,40 @@ async function loadData() {
       console.warn(
         `[loadData] Arquivo principal ausente (ENOENT), mas backup válido encontrado: ${backupCandidate.filePath}`
       );
+      const normalizedBackup = migrateAndNormalize(
+        backupCandidate.parsed,
+        seed
+      );
+      if (!normalizedBackup.ok) {
+        return normalizedBackup;
+      }
+
+      // Se o backup recuperado precisou de migração ou estava sem o arquivo principal,
+      // salvamos atomicamente o novo kring-vlr-data.json
+      try {
+        const temp = `${file}.tmp`;
+        await fs.writeFile(
+          temp,
+          JSON.stringify(normalizedBackup.data, null, 2),
+          'utf8'
+        );
+        await fs.rename(temp, file);
+      } catch (saveRestoredErr) {
+        console.error(
+          '[loadData] Falha ao persistir dados recuperados do backup:',
+          saveRestoredErr
+        );
+      }
+
       return {
         ok: true,
         recoveredFromBackup: true,
         backupSource: path.basename(backupCandidate.filePath),
-        ...formatDataPayload(backupCandidate.parsed, seed),
+        migratedV4: normalizedBackup.migratedV4,
+        ...normalizedBackup.data,
       };
     }
-    // Nenhum backup existe: primeira execução limpa do app
+    // Nenhum backup existe: primeira execução limpa do app (já nasce em v4)
     return { ok: true, isNew: true, ...emptyData(), ...seed };
   }
 
@@ -273,10 +375,57 @@ async function loadData() {
     );
   }
 
-  // Se o JSON principal for válido, agenda backup rotativo na inicialização e retorna com sucesso
+  // Se o JSON principal for válido:
   if (parsed) {
-    createRotatingBackupIfNeeded(true).catch(() => {});
-    return { ok: true, ...formatDataPayload(parsed, seed) };
+    const normalized = migrateAndNormalize(parsed, seed);
+    if (!normalized.ok) {
+      console.warn(
+        `[loadData] Versão de schema incompatível: ${parsed.schemaVersion}`
+      );
+      return normalized;
+    }
+
+    if (normalized.migratedV4) {
+      console.info(
+        '[loadData] Arquivo legado detectado. Executando migração v4 com backup de segurança...'
+      );
+      try {
+        // Backup pré-migração antes de qualquer alteração no disco
+        await createPreMigrationBackup(file);
+
+        // Escrita atômica do arquivo migrado
+        const temp = `${file}.tmp`;
+        await fs.writeFile(
+          temp,
+          JSON.stringify(normalized.data, null, 2),
+          'utf8'
+        );
+        await fs.rename(temp, file);
+        console.info('[loadData] Migração v4 persistida com sucesso.');
+      } catch (migWriteErr) {
+        console.error(
+          '[loadData] Falha ao gravar arquivo migrado para v4:',
+          migWriteErr
+        );
+        return {
+          ok: false,
+          reason: 'migration-failed',
+          error: migWriteErr.message,
+        };
+      }
+    }
+
+    try {
+      await createRotatingBackupIfNeeded(true);
+    } catch {
+      // Backup rotativo em caso de falha não interrompe o carregamento
+    }
+    return {
+      ok: true,
+      migratedV4: normalized.migratedV4,
+      migrationStats: normalized.stats,
+      ...normalized.data,
+    };
   }
 
   // 3. O arquivo principal falhou! Tentar carregar do backup válido mais recente
@@ -289,7 +438,7 @@ async function loadData() {
     );
     const timestamp = Date.now();
     const corruptedPreserved = path.join(
-      app.getPath('userData'),
+      getDataDir(),
       `kring-vlr-data.corrupted-${timestamp}.json`
     );
     try {
@@ -301,19 +450,25 @@ async function loadData() {
       );
     }
 
+    const normalizedBackup = migrateAndNormalize(latestBackup.parsed, seed);
+    if (!normalizedBackup.ok) {
+      return normalizedBackup;
+    }
+
     return {
       ok: true,
       recoveredFromBackup: true,
       corruptedPreservedAs: path.basename(corruptedPreserved),
       backupSource: path.basename(latestBackup.filePath),
-      ...formatDataPayload(latestBackup.parsed, seed),
+      migratedV4: normalizedBackup.migratedV4,
+      ...normalizedBackup.data,
     };
   }
 
   // 4. O backup também falhou ou não existe! Preservar o arquivo corrompido e NÃO sobrescrever com emptyData
   const timestamp = Date.now();
   const corruptedFile = path.join(
-    app.getPath('userData'),
+    getDataDir(),
     `kring-vlr-data.corrupted-${timestamp}.json`
   );
   try {
@@ -336,6 +491,28 @@ async function loadData() {
 }
 
 ipcMain.handle('data:load', async () => loadData());
+ipcMain.handle('data:import', async (_event, rawData) => {
+  if (
+    !rawData ||
+    typeof rawData !== 'object' ||
+    !Array.isArray(rawData.vods) ||
+    !Array.isArray(rawData.lineups)
+  ) {
+    return { ok: false, error: 'Formato de dados inválido para importação.' };
+  }
+
+  const seed = await loadCatalogSeed();
+  const normalized = migrateAndNormalize(rawData, seed);
+  if (!normalized.ok) {
+    return normalized;
+  }
+
+  return {
+    ok: true,
+    data: normalized.data,
+    migratedV4: normalized.migratedV4,
+  };
+});
 ipcMain.handle('data:save', async (_event, data) => {
   if (
     !data ||
@@ -358,7 +535,7 @@ ipcMain.handle('data:save', async (_event, data) => {
     gameplans: Array.isArray(data.gameplans) ? data.gameplans : [],
     maps: Array.isArray(data.maps) ? data.maps : [],
     agents: Array.isArray(data.agents) ? data.agents : [],
-    schemaVersion: 3,
+    schemaVersion: 4,
   };
 
   await fs.writeFile(temp, JSON.stringify(payload, null, 2), 'utf8');
@@ -368,7 +545,7 @@ ipcMain.handle('data:save', async (_event, data) => {
 
 ipcMain.handle('userData:open-folder', async () => {
   try {
-    const userDir = app.getPath('userData');
+    const userDir = getDataDir();
     await shell.openPath(userDir);
     return { ok: true };
   } catch (err) {
@@ -1008,3 +1185,11 @@ app.on('will-quit', () => {
     currentAnalyzerProcess = null;
   }
 });
+
+module.exports = {
+  getDataDir,
+  createPreMigrationBackup,
+  migrateAndNormalize,
+  formatDataPayload,
+  loadData,
+};
