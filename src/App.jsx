@@ -599,6 +599,16 @@ function App() {
 
   const setFilter = (key, value) => setFilters((previous) => ({ ...previous, [key]: value }));
 
+  const handleCopyDiscordReport = async (vod) => {
+    try {
+      const text = formatDiscordReport(vod);
+      await navigator.clipboard.writeText(text);
+      setToast('📋 Relatório copiado para a área de transferência! Cole no Discord.');
+    } catch {
+      setToast('Não foi possível copiar o relatório.');
+    }
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -620,7 +630,7 @@ function App() {
           <div className="sidebar-footer">
             <span className="status-dot" />
             <span>Kring VLR</span>
-            <span className="version">v1.0.9</span>
+            <span className="version">v1.0.10</span>
             <button
               type="button"
               className="updater-check-btn"

@@ -267,6 +267,7 @@ class ValorantAnalyzer:
         current_round_start_time = gameplay_start_sec
         last_hud_gray = None
         last_hud_ocr_time = -999.0
+        last_kf_gray = None
 
         while current_frame_idx < frames_to_process:
             cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
@@ -334,17 +335,21 @@ class ValorantAnalyzer:
                                 current_round_start_time = current_time_sec
 
             # 2. Analyze Killfeed (Only after gameplay has started!)
-            if current_time_sec >= gameplay_start_sec:
+            if current_time_sec >= gameplay_start_sec and self.ocr:
                 kx, ky, kw, kh = kf_roi
                 kf_crop = frame[ky:ky+kh, kx:kx+kw]
 
-                green_mask = (kf_crop[:, :, 1] > 110) & (kf_crop[:, :, 1] > kf_crop[:, :, 2] + 20)
-                red_mask = (kf_crop[:, :, 2] > 125) & (kf_crop[:, :, 2] > kf_crop[:, :, 1] + 20)
+                green_mask = (kf_crop[:, :, 1] > 115) & (kf_crop[:, :, 1] > kf_crop[:, :, 2] + 25)
+                red_mask = (kf_crop[:, :, 2] > 130) & (kf_crop[:, :, 2] > kf_crop[:, :, 1] + 25)
                 g_sum = int(np.sum(green_mask))
                 r_sum = int(np.sum(red_mask))
-                has_kill_banner = (g_sum > 250) or (r_sum > 250)
+                has_kill_banner = (g_sum > 750) or (r_sum > 750)
 
-                if has_kill_banner and self.ocr:
+                kf_gray = cv2.cvtColor(kf_crop, cv2.COLOR_BGR2GRAY)
+                kf_diff = float(np.mean(cv2.absdiff(kf_gray, last_kf_gray))) if last_kf_gray is not None else 999.0
+
+                if has_kill_banner and (kf_diff > 3.5 or last_kf_gray is None):
+                    last_kf_gray = kf_gray
                     # Single-pass batch OCR over the killfeed on GPU
                     kf_res, _ = self.ocr(kf_crop)
                     if kf_res:
