@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownToLine, ArrowUpFromLine, BarChart3, BookOpen,
   Check, ChevronDown, CircleHelp, ClipboardPaste, Crosshair, ExternalLink, FileVideo2,
-  Filter, FolderOpen, Gamepad2, LayoutDashboard, ListFilter, Map as MapIcon,
+  Filter, FolderOpen, LayoutDashboard, ListFilter, Map as MapIcon,
   Pencil, Plus, Search, ShieldCheck, Swords, Target, Trash2, Trophy,
   Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles, Sun, Moon, RefreshCw,
   Maximize2, Minimize2, Coins, Copy,
@@ -111,7 +111,6 @@ function App() {
   const [filters, setFilters] = useState({ map: 'Todos', agent: 'Todos', result: 'Todos' });
   const [toast, setToast] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
-  const [vodAnalysis, setVodAnalysis] = useState({ busy: false, progress: 0, message: '' });
   const [theme, setTheme] = useState(() => localStorage.getItem('kring-theme') || 'dark');
   const [updateInfo, setUpdateInfo] = useState(null);
   const [dataLoadError, setDataLoadError] = useState(null);
@@ -152,7 +151,6 @@ function App() {
   };
   const vodFileInputRef = useRef(null);
   const importInputRef = useRef(null);
-  const defaultsImportRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -249,8 +247,6 @@ function App() {
 
   const overall = useMemo(() => calcStats(data.vods), [data.vods]);
   const mapsStats = useMemo(() => groupStats(data.vods, (v) => v.map), [data.vods]);
-  const agentsStats = useMemo(() => groupStats(data.vods, (v) => v.agent), [data.vods]);
-  const mapAgentStats = useMemo(() => groupStats(data.vods, (v) => v.map && v.agent ? `${v.map} · ${v.agent}` : ''), [data.vods]);
   const activeMaps = useMemo(() => data.maps.filter((item) => item.competitiveActive).slice().sort((a, b) => a.name.localeCompare(b.name)), [data.maps]);
   const activeAgents = useMemo(() => data.agents.filter((item) => item.active).slice().sort((a, b) => a.name.localeCompare(b.name)), [data.agents]);
   const tacticsMaps = useMemo(() => uniqueSorted([...data.maps.map((item) => item.name), ...data.tactics.map((item) => item.map)]), [data.maps, data.tactics]);
@@ -320,7 +316,7 @@ function App() {
     if (window.kringAPI?.selectVideoFile) {
       const selected = await window.kringAPI.selectVideoFile();
       if (selected) {
-        const fileName = selected.split(/[\/\\]/).pop();
+        const fileName = selected.split(/[/\\]/).pop();
         setForm((prev) => ({
           ...prev,
           localVideoPath: selected,
@@ -818,7 +814,7 @@ function App() {
 
         <div className="page-content">
           {view === 'dashboard' && <Dashboard
-            data={data} overall={overall} mapsStats={mapsStats} agentsStats={agentsStats}
+            data={data} overall={overall} mapsStats={mapsStats}
             onAddVod={() => openCreate('vod')} onGo={setView} onOpenVOD={openExternal}
             onAddLineup={() => openCreate('lineup')}
             onReview={(vod) => setReviewVod(vod)}
@@ -853,7 +849,6 @@ function App() {
             onToggleMap={(item) => setData((previous) => ({ ...previous, maps: previous.maps.map((row) => row.id === item.id ? { ...row, competitiveActive: !row.competitiveActive } : row) }))}
             onToggleAgent={(item) => setData((previous) => ({ ...previous, agents: previous.agents.map((row) => row.id === item.id ? { ...row, active: !row.active } : row) }))}
             onRestoreDefaults={restoreCatalogDefaults}
-            onToast={setToast}
           />}
           {view === 'training' && (
             <TrainingPage
@@ -866,7 +861,7 @@ function App() {
               onToast={setToast}
             />
           )}
-          {view === 'stats' && <StatsPage vods={data.vods} gameplans={data.gameplans} mapsStats={mapsStats} agentsStats={agentsStats} mapAgentStats={mapAgentStats} onToast={setToast} />}
+          {view === 'stats' && <StatsPage vods={data.vods} gameplans={data.gameplans} onToast={setToast} />}
         </div>
 
         <footer className="main-footer"><span>KRING VLR <span className="footer-dot">•</span> Ferramenta pessoal de análise</span><span><ShieldCheck size={13} /> Salvamento automático local</span></footer>
@@ -1604,7 +1599,6 @@ function CatalogManager({
   onToggleMap,
   onToggleAgent,
   onRestoreDefaults,
-  onToast,
 }) {
   const [tab, setTab] = useState('maps');
   const [search, setSearch] = useState('');
@@ -2775,7 +2769,7 @@ function TrainingPage({ training, onAdd, onEdit, onDelete, onToggle, onToggleAll
                 <button
                   key={cat}
                   type="button"
-                  className={`filter-chip ${categoryFilter === cat ? 'active' : ''} ${cat !== 'Todas' ? `cat-chip-${cat.toLowerCase().replace(/[\s\/]+/g, '-')}` : ''}`}
+                  className={`filter-chip ${categoryFilter === cat ? 'active' : ''} ${cat !== 'Todas' ? `cat-chip-${cat.toLowerCase().replace(/[\s/]+/g, '-')}` : ''}`}
                   onClick={() => setCategoryFilter(cat)}
                 >
                   {cat}
@@ -2857,7 +2851,7 @@ function TrainingPage({ training, onAdd, onEdit, onDelete, onToggle, onToggleAll
 
                 <div className="training-list">
                   {items.map((item) => {
-                    const catSlug = (item.category || 'Mecânica').toLowerCase().replace(/[\s\/]+/g, '-');
+                    const catSlug = (item.category || 'Mecânica').toLowerCase().replace(/[\s/]+/g, '-');
                     return (
                       <div className={`training-item ${item.done ? 'completed' : ''}`} key={item.id}>
                         <button
@@ -2936,7 +2930,7 @@ function TrainingPage({ training, onAdd, onEdit, onDelete, onToggle, onToggleAll
   );
 }
 
-function Dashboard({ data, overall, mapsStats, agentsStats, onAddVod, onAddLineup, onGo, onOpenVOD, onReview }) {
+function Dashboard({ data, overall, mapsStats, onAddVod, onAddLineup, onGo, onOpenVOD, onReview }) {
   const recent = data.vods.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 5);
   const bestMap = mapsStats.filter((s) => s.decisions > 0).slice().sort((a, b) => b.winrate - a.winrate || b.decisions - a.decisions)[0];
   return <section>
@@ -3060,7 +3054,7 @@ function LineupCard({ lineup, onEdit, onDelete, onOpen, onPreview, onCopy }) {
   );
 }
 
-function StatsPage({ vods, gameplans = [], mapsStats, agentsStats, mapAgentStats, onToast }) {
+function StatsPage({ vods, gameplans = [], onToast }) {
   const [selectedMap, setSelectedMap] = useState('Todos');
   const [selectedAgent, setSelectedAgent] = useState('Todos');
   const [period, setPeriod] = useState('all'); // 'all' | '7d' | '30d' | '90d'

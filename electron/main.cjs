@@ -1,7 +1,6 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, protocol } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('node:child_process');
-const { pathToFileURL } = require('node:url');
 const fs = require('node:fs/promises');
 const nodeFs = require('node:fs');
 const { Readable } = require('node:stream');
