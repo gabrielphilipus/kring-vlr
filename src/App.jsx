@@ -29,7 +29,6 @@ import {
   FileVideo2,
   Filter,
   FolderOpen,
-  LayoutDashboard,
   ListFilter,
   Map as MapIcon,
   Pencil,
@@ -59,26 +58,14 @@ import {
   Copy,
 } from 'lucide-react';
 
-const AGENT_ROLES = ['Duelista', 'Iniciador', 'Controlador', 'Sentinela'];
-const RESULTS = ['Vitória', 'Derrota', 'Empate'];
-const ROUND_RESULTS = [
-  'Pistol',
-  'Antieco',
-  'Bônus',
-  'Antieco 2',
-  'Primeiro armado',
-];
-const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Visão geral', icon: LayoutDashboard },
-  { id: 'veto', label: 'Simulador de veto', icon: MapIcon },
-  { id: 'vods', label: 'Biblioteca de VODs', icon: Video },
-  { id: 'lineups', label: 'Lineups', icon: Target },
-  { id: 'gameplans', label: 'Gameplans', icon: Swords },
-  { id: 'catalogs', label: 'Mapas e agentes', icon: Crosshair },
-  { id: 'tactics', label: 'Táticos', icon: BookOpen },
-  { id: 'training', label: 'Treino individual', icon: Activity },
-  { id: 'stats', label: 'Estatísticas', icon: BarChart3 },
-];
+import {
+  AGENT_ROLES,
+  RESULTS,
+  ROUND_RESULTS,
+  SIDES,
+} from './constants/game.js';
+import { NAV_ITEMS } from './constants/navigation.js';
+import { TACTIC_CATEGORIES } from './constants/tactics.js';
 
 function calcStats(rows) {
   const wins = rows.filter((r) => r.result === 'Vitória').length;
@@ -2553,13 +2540,7 @@ function App() {
                       value={form.category || 'Default'}
                       onChange={(e) => updateForm('category', e.target.value)}
                     >
-                      {[
-                        'Default',
-                        'Execução',
-                        'Pistol',
-                        'Antieco',
-                        'Rounds de ultimate',
-                      ].map((c) => (
+                      {TACTIC_CATEGORIES.map((c) => (
                         <option key={c}>{c}</option>
                       ))}
                     </select>
@@ -3892,9 +3873,11 @@ function LineupsPage({
                 onChange={(e) => setSideFilter(e.target.value)}
               >
                 <option value="Todos">Todos os lados</option>
-                <option value="Ataque">Ataque</option>
-                <option value="Defesa">Defesa</option>
-                <option value="Ambos">Ambos</option>
+                {SIDES.map((side) => (
+                  <option key={side} value={side}>
+                    {side}
+                  </option>
+                ))}
               </select>
               <ChevronDown size={14} />
             </div>
@@ -5064,13 +5047,7 @@ function TacticsPage({
                 onChange={(e) => setCategory(e.target.value)}
               >
                 <option value="Todas">Todas as categorias</option>
-                {[
-                  'Default',
-                  'Execução',
-                  'Pistol',
-                  'Antieco',
-                  'Rounds de ultimate',
-                ].map((item) => (
+                {TACTIC_CATEGORIES.map((item) => (
                   <option key={item} value={item}>
                     {item}
                   </option>
@@ -5085,9 +5062,11 @@ function TacticsPage({
                 onChange={(e) => setSideFilter(e.target.value)}
               >
                 <option value="Todos">Todos os lados</option>
-                <option value="Ataque">Ataque</option>
-                <option value="Defesa">Defesa</option>
-                <option value="Ambos">Ambos</option>
+                {SIDES.map((side) => (
+                  <option key={side} value={side}>
+                    {side}
+                  </option>
+                ))}
               </select>
               <ChevronDown size={14} />
             </div>
