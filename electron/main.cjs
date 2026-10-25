@@ -235,14 +235,53 @@ function getAnalyzerDir() {
   return process.resourcesPath || app.getPath('userData');
 }
 
+const ALLOWED_VIDEO_EXTS = new Set(['.mp4', '.mkv', '.webm', '.mov', '.avi']);
+
+function terminateProcessTree(proc) {
+  if (!proc || !proc.pid) return;
+  const pid = proc.pid;
+  try {
+    if (process.platform === 'win32') {
+      const { execSync } = require('node:child_process');
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+    } else {
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+      }, 800);
+    }
+  } catch {}
+}
+
 // Start native computer vision analyzer process
-ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, userNick, userAgent }) => {
+ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, userNick, userAgent, timeoutMs }) => {
   if (currentAnalyzerProcess) {
-    try { currentAnalyzerProcess.kill(); } catch {}
+    terminateProcessTree(currentAnalyzerProcess);
     currentAnalyzerProcess = null;
   }
 
-  return new Promise((resolve, reject) => {
+  // 1. Validar que videoPath é string, existe e possui extensão permitida
+  if (typeof videoPath !== 'string' || !videoPath.trim()) {
+    return { ok: false, error: 'Caminho do arquivo de vídeo inválido ou não fornecido.' };
+  }
+  const normVideoPath = path.normalize(videoPath.trim());
+  if (!path.isAbsolute(normVideoPath)) {
+    return { ok: false, error: 'O caminho do vídeo deve ser um caminho absoluto.' };
+  }
+  const ext = path.extname(normVideoPath).toLowerCase();
+  if (!ALLOWED_VIDEO_EXTS.has(ext)) {
+    return { ok: false, error: `Extensão de vídeo não permitida (${ext || 'sem extensão'}). Formatos aceitos: .mp4, .mkv, .webm, .mov, .avi` };
+  }
+  try {
+    const stat = await fs.stat(normVideoPath);
+    if (!stat.isFile()) {
+      return { ok: false, error: 'O caminho informado não é um arquivo válido.' };
+    }
+  } catch {
+    return { ok: false, error: `Arquivo de vídeo não encontrado no caminho: ${normVideoPath}` };
+  }
+
+  return new Promise((resolve) => {
     const fsSync = require('node:fs');
     const analyzerDir = getAnalyzerDir();
 
@@ -270,14 +309,14 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
 
     if (standaloneExe) {
       command = standaloneExe;
-      args = ['--video', videoPath];
+      args = ['--video', normVideoPath];
       if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
       if (userNick) args.push('--user-nick', String(userNick));
       if (userAgent) args.push('--user-agent', String(userAgent));
     } else {
       command = resolvePython();
       const analyzerScript = path.join(analyzerDir, 'analyzer.py');
-      args = [analyzerScript, '--video', videoPath];
+      args = [analyzerScript, '--video', normVideoPath];
       if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
       if (userNick) args.push('--user-nick', String(userNick));
       if (userAgent) args.push('--user-agent', String(userAgent));
@@ -298,6 +337,24 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     });
 
     currentAnalyzerProcess = pythonProcess;
+
+    // 2. Timeout configurável para a análise (padrão generoso de 45 minutos)
+    const DEFAULT_TIMEOUT_MS = 45 * 60 * 1000;
+    const timeoutDuration = (Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0)
+      ? Number(timeoutMs)
+      : DEFAULT_TIMEOUT_MS;
+
+    const timeoutTimer = setTimeout(() => {
+      if (currentAnalyzerProcess === pythonProcess) {
+        const timeoutMsg = `Tempo limite de análise excedido (${Math.round(timeoutDuration / 60000)} minutos). O processo foi encerrado para evitar travamento.`;
+        console.warn(`[vod:start-analysis] ${timeoutMsg}`);
+        mainWindow?.webContents.send('vod:error', timeoutMsg);
+        terminateProcessTree(pythonProcess);
+        currentAnalyzerProcess = null;
+        resolve({ ok: false, error: timeoutMsg });
+      }
+    }, timeoutDuration);
+
     let finalResult = null;
     let reportedError = null;
     let stdoutBuffer = '';
@@ -327,6 +384,7 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
       }
     });
 
+    // 3. Captura contínua de stderr do Python
     pythonProcess.stderr.on('data', (chunk) => {
       const text = chunk.toString('utf8');
       stderrBuffer += text;
@@ -334,6 +392,7 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     });
 
     pythonProcess.on('close', (code) => {
+      clearTimeout(timeoutTimer);
       currentAnalyzerProcess = null;
       if (reportedError) {
         resolve({ ok: false, error: reportedError });
@@ -350,16 +409,20 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
         }
       } else {
         const detail = stderrBuffer.trim() ? `: ${stderrBuffer.trim().slice(-300)}` : '';
-        resolve({ ok: false, error: `Processo do analisador encerrou com erro (código ${code})${detail}` });
+        const errMsg = `Processo do analisador encerrou com erro (código ${code})${detail}`;
+        mainWindow?.webContents.send('vod:error', errMsg);
+        resolve({ ok: false, error: errMsg });
       }
     });
 
     pythonProcess.on('error', (err) => {
+      clearTimeout(timeoutTimer);
       currentAnalyzerProcess = null;
       let msg = err.message;
       if (err.code === 'ENOENT') {
         msg = 'Python não foi encontrado no sistema. Para analisar vídeos sem Python instalado, compile o executável analyzer.exe ou instale o Python marcando "Add Python to PATH".';
       }
+      mainWindow?.webContents.send('vod:error', msg);
       resolve({ ok: false, error: msg });
     });
   });
@@ -367,7 +430,7 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
 
 ipcMain.handle('vod:cancel-analysis', async () => {
   if (currentAnalyzerProcess) {
-    try { currentAnalyzerProcess.kill(); } catch {}
+    terminateProcessTree(currentAnalyzerProcess);
     currentAnalyzerProcess = null;
     return { ok: true };
   }
@@ -423,11 +486,26 @@ app.whenReady().then(() => {
         targetPath = raw;
       }
 
+      // 1. Rejeitar caminhos não absolutos e normalizar
+      if (!targetPath || !path.isAbsolute(targetPath)) {
+        return new Response('Caminho de vídeo inválido ou não absoluto.', { status: 400 });
+      }
+      targetPath = path.normalize(targetPath);
+
+      // 2. Rejeitar extensões não permitidas
+      const ext = path.extname(targetPath).toLowerCase();
+      if (!ALLOWED_VIDEO_EXTS.has(ext)) {
+        return new Response('Extensão de arquivo não permitida para reprodução.', { status: 403 });
+      }
+
       const stat = await fs.stat(targetPath);
+      if (!stat.isFile()) {
+        return new Response('O caminho informado não é um arquivo.', { status: 400 });
+      }
+
       const fileSize = stat.size;
       const rangeHeader = request.headers.get('range');
 
-      const ext = path.extname(targetPath).toLowerCase();
       const mimeTypes = {
         '.mp4': 'video/mp4',
         '.mkv': 'video/x-matroska',
@@ -437,23 +515,45 @@ app.whenReady().then(() => {
       };
       const contentType = mimeTypes[ext] || 'video/mp4';
 
+      // 3. Suporte correto a Range requests incluindo sufixos (bytes=-N)
       if (rangeHeader) {
-        const parts = rangeHeader.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunkSize = (end - start) + 1;
-        const nodeStream = nodeFs.createReadStream(targetPath, { start, end });
-        const webStream = Readable.toWeb(nodeStream);
+        const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+        if (match) {
+          let start;
+          let end;
 
-        return new Response(webStream, {
-          status: 206,
-          headers: {
-            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': String(chunkSize),
-            'Content-Type': contentType,
-          },
-        });
+          if (!match[1] && match[2]) {
+            // Suffix range: bytes=-500 (solicita os últimos 500 bytes)
+            const suffixLen = parseInt(match[2], 10);
+            start = Math.max(0, fileSize - suffixLen);
+            end = fileSize - 1;
+          } else {
+            start = parseInt(match[1], 10) || 0;
+            end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+          }
+
+          if (start >= fileSize || end < start) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${fileSize}` },
+            });
+          }
+
+          end = Math.min(end, fileSize - 1);
+          const chunkSize = (end - start) + 1;
+          const nodeStream = nodeFs.createReadStream(targetPath, { start, end });
+          const webStream = Readable.toWeb(nodeStream);
+
+          return new Response(webStream, {
+            status: 206,
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(chunkSize),
+              'Content-Type': contentType,
+            },
+          });
+        }
       }
 
       const nodeStream = nodeFs.createReadStream(targetPath);
@@ -562,3 +662,18 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('before-quit', () => {
+  if (currentAnalyzerProcess) {
+    terminateProcessTree(currentAnalyzerProcess);
+    currentAnalyzerProcess = null;
+  }
+});
+
+app.on('will-quit', () => {
+  if (currentAnalyzerProcess) {
+    terminateProcessTree(currentAnalyzerProcess);
+    currentAnalyzerProcess = null;
+  }
+});
+
