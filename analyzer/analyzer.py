@@ -10,12 +10,13 @@ Analyzes private scrim VODs to extract:
 - Consolidated player scoreboard statistics
 """
 
-import sys
-import os
-import json
 import argparse
-import time
+import json
+import os
 import re
+import sys
+import time
+
 import cv2
 import numpy as np
 
@@ -71,16 +72,15 @@ def normalize_nick(txt: str) -> str:
 
 
 class ValorantAnalyzer:
-    def __init__(self, templates_dir: str = None):
+    def __init__(self, templates_dir: str | None = None):
         if templates_dir is None:
             templates_dir = os.path.join(get_base_dir(), "templates")
-        
+
         self.templates_dir = templates_dir
         self.tmpl_friendly = cv2.imread(os.path.join(templates_dir, "hs_friendly.png"))
         self.tmpl_enemy = cv2.imread(os.path.join(templates_dir, "hs_enemy.png"))
         self.ocr = None
         self.ocr_error = None
-        
         if RAPID_OCR_AVAILABLE:
             # 1. Try DirectML GPU acceleration first
             try:
@@ -229,7 +229,7 @@ class ValorantAnalyzer:
         for ag in VALORANT_AGENTS:
             if ag.lower() in norm:
                 # Find player on this team playing this agent
-                for r_norm, info in roster.items():
+                for _, info in roster.items():
                     if info["team"] == team and info["agent"].lower() == ag.lower():
                         return (info["canonical_nick"], info["agent"])
                 # Return agent with generic player name
@@ -240,7 +240,7 @@ class ValorantAnalyzer:
             # Check if there is an existing roster player with very close edit distance (diff <= 1)
             for r_norm, info in roster.items():
                 if abs(len(r_norm) - len(norm)) <= 1:
-                    diffs = sum(1 for a, b in zip(r_norm, norm) if a != b) + abs(len(r_norm) - len(norm))
+                    diffs = sum(1 for a, b in zip(r_norm, norm, strict=False) if a != b) + abs(len(r_norm) - len(norm))
                     if diffs <= 1:
                         return (info["canonical_nick"], info["agent"])
 
@@ -250,7 +250,7 @@ class ValorantAnalyzer:
 
         return ("Aliado" if team == "friendly" else "Inimigo", "Agente")
 
-    def analyze_vod(self, video_path: str, max_duration_sec: float = None, sample_interval_sec: float = 1.0, user_nick: str = None, user_agent: str = None):
+    def analyze_vod(self, video_path: str, max_duration_sec: float | None = None, sample_interval_sec: float = 1.0, user_nick: str | None = None, user_agent: str | None = None):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Nao foi possivel abrir o video: {video_path}")
@@ -303,17 +303,17 @@ class ValorantAnalyzer:
         roster, gameplay_start_sec = self.discover_roster(cap, fps, user_nick=user_nick, user_agent=user_agent)
 
         frame_step = max(1, int(fps * sample_interval_sec))
-        
+
         rounds = []
         current_round_num = 1
         current_round_kills = []
         round_has_first_kill = False
         current_score_friendly = 0
         current_score_enemy = 0
-        
+
         # Deduplication tracker for killfeed: list of (killer, victim, timestamp)
         recent_kills = []
-        
+
         current_frame_idx = 0
         last_progress_emit = 0
         current_round_start_time = gameplay_start_sec
@@ -594,7 +594,7 @@ class ValorantAnalyzer:
                     players_stats[victim]["first_deaths"] += 1
 
         # Populate any roster players who had 0 kills/deaths into scoreboard
-        for r_norm, info in roster.items():
+        for _, info in roster.items():
             canonical = info["canonical_nick"]
             if canonical not in players_stats and len(canonical) >= 3 and canonical.lower() not in IGNORE_WORDS:
                 players_stats[canonical] = {
@@ -610,7 +610,7 @@ class ValorantAnalyzer:
                 }
 
         # Calculate HS% and K/D
-        for p, s in players_stats.items():
+        for _, s in players_stats.items():
             s["headshot_rate"] = round((s["headshots"] / s["kills"] * 100), 1) if s["kills"] > 0 else 0.0
             s["kd_ratio"] = round(s["kills"] / s["deaths"], 2) if s["deaths"] > 0 else s["kills"]
 
