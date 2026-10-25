@@ -114,6 +114,7 @@ function App() {
   const [vodAnalysis, setVodAnalysis] = useState({ busy: false, progress: 0, message: '' });
   const [theme, setTheme] = useState(() => localStorage.getItem('kring-theme') || 'dark');
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [dataLoadError, setDataLoadError] = useState(null);
   const imageInputRef = useRef(null);
 
   useEffect(() => {
@@ -164,11 +165,27 @@ function App() {
           const raw = localStorage.getItem('kring-vlr-data');
           loaded = raw ? JSON.parse(raw) : { vods: [], lineups: [], tactics: [], training: [], gameplans: [], maps: [], agents: [] };
         }
+
+        if (!active) return;
+
+        // Se o carregamento indicar falha crítica de corrupção:
+        if (loaded && loaded.ok === false) {
+          console.error('[App] Falha crítica de integridade:', loaded);
+          setDataLoadError(loaded);
+          setToast(`⚠️ ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.`);
+          // NÃO chama setReady(true), impedindo qualquer auto-save de rodar
+          return;
+        }
+
+        if (loaded?.recoveredFromBackup) {
+          setToast('🛡️ AVISO: Dados restaurados com sucesso a partir da cópia de segurança (.bak).');
+        }
+
         let seed = { maps: [], agents: [] };
         if (!Array.isArray(loaded?.maps) || !Array.isArray(loaded?.agents)) {
           try { const response = await fetch('./catalogs.json'); if (response.ok) seed = await response.json(); } catch {}
         }
-        if (!active) return;
+
         setData({
           vods: Array.isArray(loaded?.vods) ? loaded.vods : [],
           lineups: Array.isArray(loaded?.lineups) ? loaded.lineups : [],
@@ -178,11 +195,10 @@ function App() {
           maps: Array.isArray(loaded?.maps) ? loaded.maps : (Array.isArray(seed.maps) ? seed.maps : []),
           agents: Array.isArray(loaded?.agents) ? loaded.agents : (Array.isArray(seed.agents) ? seed.agents : []),
         });
+        setReady(true);
       } catch (error) {
         console.error(error);
         if (active) setToast('Não foi possível carregar os dados salvos.');
-      } finally {
-        if (active) setReady(true);
       }
     })();
     return () => { active = false; };
@@ -717,6 +733,16 @@ function App() {
             {view !== 'veto' && view !== 'stats' && view !== 'tactics' && <button className="button button-primary button-small" onClick={() => openCreate(view === 'lineups' ? 'lineup' : view === 'training' ? 'training' : view === 'gameplans' ? 'gameplan' : view === 'catalogs' ? 'catalogMap' : 'vod')}><Plus size={16} /> {view === 'lineups' ? 'Nova lineup' : view === 'training' ? 'Adicionar treino' : view === 'gameplans' ? 'Novo Gameplan' : view === 'catalogs' ? 'Adicionar mapa' : 'Adicionar VOD'}</button>}
           </div>
         </header>
+
+        {dataLoadError && (
+          <div className="updater-banner error" style={{ background: '#7f1d1d', borderColor: '#ef4444', color: '#fff' }}>
+            <div className="updater-content">
+              <span className="updater-msg">
+                ⚠️ <strong>Atenção:</strong> O arquivo de dados local estava ilegível/corrompido. O salvamento automático foi <strong>bloqueado</strong> para proteger suas informações. O arquivo original corrompido foi preservado como <code>{dataLoadError.preservedAs}</code> na pasta de dados do sistema.
+              </span>
+            </div>
+          </div>
+        )}
 
         {updateInfo && (updateInfo.status === 'downloading' || updateInfo.status === 'downloaded' || updateInfo.status === 'available') && (
           <div className={`updater-banner ${updateInfo.status}`}>

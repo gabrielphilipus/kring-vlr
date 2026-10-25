@@ -24,6 +24,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow;
 let currentAnalyzerProcess = null;
 const dataFile = () => path.join(app.getPath('userData'), 'kring-vlr-data.json');
+const backupFile = () => path.join(app.getPath('userData'), 'kring-vlr-data.json.bak');
 const emptyData = () => ({ vods: [], lineups: [], tactics: [], training: [], gameplans: [], schemaVersion: 3 });
 const seedFile = () => path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public', 'catalogs.json');
 
@@ -34,36 +35,145 @@ async function loadCatalogSeed() {
   } catch { return { maps: [], agents: [] }; }
 }
 
+function formatDataPayload(parsed, seed) {
+  return {
+    ...parsed,
+    vods: Array.isArray(parsed.vods) ? parsed.vods : [],
+    lineups: Array.isArray(parsed.lineups) ? parsed.lineups : [],
+    tactics: Array.isArray(parsed.tactics) ? parsed.tactics : [],
+    training: Array.isArray(parsed.training) ? parsed.training : [],
+    gameplans: Array.isArray(parsed.gameplans) ? parsed.gameplans : [],
+    maps: Array.isArray(parsed.maps) ? parsed.maps : seed.maps,
+    agents: Array.isArray(parsed.agents) ? parsed.agents : seed.agents,
+    schemaVersion: parsed.schemaVersion || 3,
+  };
+}
+
 async function loadData() {
+  const file = dataFile();
+  const bak = backupFile();
+  const seed = await loadCatalogSeed();
+
+  let fileContent = null;
+  let fileExists = true;
+
   try {
-    const raw = await fs.readFile(dataFile(), 'utf8');
-    const parsed = JSON.parse(raw);
-    const seed = await loadCatalogSeed();
-    return {
-      ...parsed,
-      vods: Array.isArray(parsed.vods) ? parsed.vods : [],
-      lineups: Array.isArray(parsed.lineups) ? parsed.lineups : [],
-      tactics: Array.isArray(parsed.tactics) ? parsed.tactics : [],
-      training: Array.isArray(parsed.training) ? parsed.training : [],
-      gameplans: Array.isArray(parsed.gameplans) ? parsed.gameplans : [],
-      maps: Array.isArray(parsed.maps) ? parsed.maps : seed.maps,
-      agents: Array.isArray(parsed.agents) ? parsed.agents : seed.agents,
-      schemaVersion: 3,
-    };
-  } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Não foi possível ler os dados:', error);
-    return { ...emptyData(), ...await loadCatalogSeed() };
+    fileContent = await fs.readFile(file, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      fileExists = false;
+    } else {
+      console.error('[loadData] Erro ao acessar o arquivo de dados:', err);
+    }
   }
+
+  // 1. Arquivo não existe ainda (primeira execução limpa): retorna dados padrão/seed
+  if (!fileExists) {
+    return { ok: true, isNew: true, ...emptyData(), ...seed };
+  }
+
+  // 2. Arquivo existe: tentar analisar o JSON
+  let parsed = null;
+  try {
+    if (fileContent && typeof fileContent === 'string' && fileContent.trim().length > 0) {
+      parsed = JSON.parse(fileContent);
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('Conteúdo não é um objeto JSON válido.');
+      }
+    } else {
+      throw new Error('Arquivo de dados está vazio.');
+    }
+  } catch (parseErr) {
+    console.error('[loadData] Arquivo de dados principal ilegível/corrompido:', parseErr.message);
+  }
+
+  // Se o JSON principal for válido, retorna com sucesso
+  if (parsed) {
+    return { ok: true, ...formatDataPayload(parsed, seed) };
+  }
+
+  // 3. O arquivo principal falhou! Tentar carregar do backup (.bak)
+  console.warn('[loadData] Tentando recuperação via arquivo de backup (.bak)...');
+  let backupContent = null;
+  let backupParsed = null;
+
+  try {
+    backupContent = await fs.readFile(bak, 'utf8');
+    if (backupContent && backupContent.trim().length > 0) {
+      backupParsed = JSON.parse(backupContent);
+      if (typeof backupParsed !== 'object' || backupParsed === null) {
+        backupParsed = null;
+      }
+    }
+  } catch (bakErr) {
+    console.error('[loadData] Backup (.bak) indisponível ou inválido:', bakErr.message);
+  }
+
+  if (backupParsed) {
+    console.info('[loadData] Dados recuperados com sucesso a partir do backup (.bak)!');
+    const timestamp = Date.now();
+    const corruptedPreserved = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
+    try {
+      await fs.copyFile(file, corruptedPreserved);
+    } catch {}
+
+    return {
+      ok: true,
+      recoveredFromBackup: true,
+      corruptedPreservedAs: path.basename(corruptedPreserved),
+      ...formatDataPayload(backupParsed, seed),
+    };
+  }
+
+  // 4. O backup também falhou ou não existe! Preservar o arquivo corrompido e NÃO sobrescrever com emptyData
+  const timestamp = Date.now();
+  const corruptedFile = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
+  try {
+    await fs.rename(file, corruptedFile);
+    console.warn(`[loadData] Arquivo corrompido preservado em: ${corruptedFile}`);
+  } catch (renameErr) {
+    console.error('[loadData] Não foi possível renomear arquivo corrompido:', renameErr);
+  }
+
+  return {
+    ok: false,
+    reason: 'corrupted',
+    preservedAs: path.basename(corruptedFile),
+  };
 }
 
 ipcMain.handle('data:load', async () => loadData());
 ipcMain.handle('data:save', async (_event, data) => {
-  if (!data || !Array.isArray(data.vods) || !Array.isArray(data.lineups)) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.vods) || !Array.isArray(data.lineups)) {
     throw new Error('Formato de dados inválido.');
   }
   const file = dataFile();
+  const bak = backupFile();
   const temp = `${file}.tmp`;
-  await fs.writeFile(temp, JSON.stringify({ ...data, tactics: Array.isArray(data.tactics) ? data.tactics : [], training: Array.isArray(data.training) ? data.training : [], gameplans: Array.isArray(data.gameplans) ? data.gameplans : [], maps: Array.isArray(data.maps) ? data.maps : [], agents: Array.isArray(data.agents) ? data.agents : [], schemaVersion: 3 }, null, 2), 'utf8');
+
+  // Antes de gravar, se o arquivo atual for um JSON válido, copie-o para .bak.
+  // Se o arquivo atual for inválido, NÃO sobrescreva o .bak!
+  try {
+    const existingContent = await fs.readFile(file, 'utf8');
+    const existingParsed = JSON.parse(existingContent);
+    if (existingParsed && typeof existingParsed === 'object' && Array.isArray(existingParsed.vods)) {
+      await fs.copyFile(file, bak);
+    }
+  } catch {
+    // Arquivo atual não existe ainda ou está corrompido: preserva o .bak intacto
+  }
+
+  const payload = {
+    ...data,
+    tactics: Array.isArray(data.tactics) ? data.tactics : [],
+    training: Array.isArray(data.training) ? data.training : [],
+    gameplans: Array.isArray(data.gameplans) ? data.gameplans : [],
+    maps: Array.isArray(data.maps) ? data.maps : [],
+    agents: Array.isArray(data.agents) ? data.agents : [],
+    schemaVersion: 3,
+  };
+
+  await fs.writeFile(temp, JSON.stringify(payload, null, 2), 'utf8');
   await fs.rename(temp, file);
   return { ok: true };
 });
