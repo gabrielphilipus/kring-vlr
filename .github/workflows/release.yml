@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: release-job
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
