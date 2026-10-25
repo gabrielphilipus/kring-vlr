@@ -5,6 +5,7 @@ import {
   Filter, FolderOpen, Gamepad2, LayoutDashboard, ListFilter, Map as MapIcon,
   Pencil, Plus, Search, ShieldCheck, Swords, Target, Trash2, Trophy,
   Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles, Sun, Moon, RefreshCw,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 
 
@@ -1227,6 +1228,8 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'scoreboard'
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [activeKill, setActiveKill] = useState(null);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [scoreboardTeamFilter, setScoreboardTeamFilter] = useState('all');
 
   const videoUrl = window.kringAPI?.toLocalVideoUrl && vod.localVideoPath
     ? window.kringAPI.toLocalVideoUrl(vod.localVideoPath)
@@ -1277,9 +1280,109 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
     }
   };
 
+  // Clean, normalize and cluster OCR player stats into real match participants
+  const cleanedPlayers = useMemo(() => {
+    const raw = playersStats;
+    if (!raw || typeof raw !== 'object') return [];
+
+    const WEAPONS_AND_IGNORE = new Set([
+      'aliado', 'inimigo', 'agente', 'fense', 'defense', 'attack', 'round', 'match',
+      'high', 'medium', 'low', 'sec', 'vandal', 'phantom', 'sheriff', 'ghost', 'classic',
+      'spectre', 'operator', 'guardian', 'ares', 'odin', 'stinger', 'bucky', 'judge',
+      'marshal', 'outlaw', 'frenzy', 'shorty', 'sidearm', 'sheriffisidearm'
+    ]);
+
+    function levenshtein(a, b) {
+      const matrix = [];
+      for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+      for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+      for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+          if (b.charAt(i - 1) === a.charAt(j - 1)) matrix[i][j] = matrix[i - 1][j - 1];
+          else matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+        }
+      }
+      return matrix[b.length][a.length];
+    }
+
+    const candidates = [];
+    for (const [name, s] of Object.entries(raw)) {
+      if (!name || name.length < 2) continue;
+      if (/^\d+$/.test(name) || /^\d+\/\d+$/.test(name) || /^\d+\.\d+$/.test(name)) continue;
+      const cleanLower = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!cleanLower || cleanLower.length < 2) continue;
+      if (WEAPONS_AND_IGNORE.has(cleanLower)) continue;
+      if (cleanLower.startsWith('jogador')) continue;
+
+      candidates.push({
+        canonical: name.trim(),
+        cleanKey: cleanLower,
+        agent: (s.agent && s.agent !== 'Agente') ? s.agent : '',
+        team: s.team || 'friendly',
+        kills: s.kills || 0,
+        deaths: s.deaths || 0,
+        headshots: s.headshots || 0,
+        first_kills: s.first_kills || 0,
+        first_deaths: s.first_deaths || 0,
+      });
+    }
+
+    // Sort by kills descending
+    candidates.sort((a, b) => b.kills - a.kills);
+
+    const clusters = [];
+    for (const cand of candidates) {
+      let matched = null;
+      for (const cl of clusters) {
+        if (cl.cleanKey === cand.cleanKey) {
+          matched = cl;
+          break;
+        }
+        const dist = levenshtein(cl.cleanKey, cand.cleanKey);
+        const minLen = Math.min(cl.cleanKey.length, cand.cleanKey.length);
+        if (dist <= 1 || (dist <= 2 && minLen >= 6)) {
+          matched = cl;
+          break;
+        }
+      }
+
+      if (matched) {
+        matched.kills += cand.kills;
+        matched.deaths += cand.deaths;
+        matched.headshots += cand.headshots;
+        matched.first_kills += cand.first_kills;
+        matched.first_deaths += cand.first_deaths;
+        if (!matched.agent && cand.agent) matched.agent = cand.agent;
+      } else {
+        clusters.push({ ...cand });
+      }
+    }
+
+    return clusters
+      .filter((p) => (p.kills + p.deaths) >= 2)
+      .map((p) => ({
+        name: p.canonical,
+        agent: p.agent || 'Agente',
+        team: p.team,
+        kills: p.kills,
+        deaths: p.deaths,
+        kd_ratio: p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2),
+        headshot_rate: p.kills > 0 ? ((p.headshots / p.kills) * 100).toFixed(1) : '0.0',
+        first_kills: p.first_kills,
+        first_deaths: p.first_deaths,
+      }))
+      .sort((a, b) => b.kills - a.kills);
+  }, [playersStats]);
+
+  const filteredPlayers = useMemo(() => {
+    if (scoreboardTeamFilter === 'friendly') return cleanedPlayers.filter((p) => p.team === 'friendly');
+    if (scoreboardTeamFilter === 'enemy') return cleanedPlayers.filter((p) => p.team === 'enemy');
+    return cleanedPlayers;
+  }, [cleanedPlayers, scoreboardTeamFilter]);
+
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="review-modal-card" role="dialog" aria-modal="true">
+      <div className={`review-modal-card ${isMaximized ? 'maximized' : ''}`} role="dialog" aria-modal="true">
         <header className="review-modal-header">
           <h2>
             <Play size={20} className="badge-team-friendly" />
@@ -1298,15 +1401,31 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
             >
               <ClipboardPaste size={14} /> Copiar p/ Discord
             </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={isMaximized ? 'Restaurar' : 'Maximizar'}
+              title={isMaximized ? 'Restaurar tamanho padrão' : 'Maximizar janela (Expandir visão)'}
+              onClick={() => setIsMaximized(!isMaximized)}
+            >
+              {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
             <button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={18} /></button>
           </div>
         </header>
 
-        <div className="review-modal-body">
+        <div className={`review-modal-body ${activeTab === 'scoreboard' ? 'scoreboard-active' : ''}`}>
           <div className="review-player-section">
             <div className="review-video-wrap">
               {videoUrl ? (
-                <video ref={videoRef} src={videoUrl} controls autoPlay />
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  controls
+                  autoPlay
+                  playsInline
+                  onError={(e) => console.warn('Falha na reprodução de vídeo:', e)}
+                />
               ) : (
                 <div style={{ color: '#889', textAlign: 'center', padding: '40px' }}>
                   <FileVideo2 size={44} style={{ opacity: 0.6, marginBottom: '10px' }} />
@@ -1348,7 +1467,7 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
                 <Target size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Timeline de Abates ({displayedKills.length})
               </button>
               <button className={`review-tab-btn ${activeTab === 'scoreboard' ? 'active' : ''}`} onClick={() => setActiveTab('scoreboard')}>
-                <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Placar do Treino ({Object.keys(playersStats).length} jogadores)
+                <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Placar do Treino ({cleanedPlayers.length} jogadores)
               </button>
             </div>
 
@@ -1419,43 +1538,84 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
                 </div>
               </>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="review-scoreboard-table">
-                  <thead>
-                    <tr>
-                      <th>JOGADOR</th>
-                      <th>AGENTE</th>
-                      <th>TIME</th>
-                      <th>ABATES</th>
-                      <th>MORTES</th>
-                      <th>K/D</th>
-                      <th>HS %</th>
-                      <th>1st KILL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(playersStats).length === 0 ? (
-                      <tr><td colSpan={8} style={{ textAlign: 'center', padding: '20px', color: '#778' }}>Estatísticas individuais não disponíveis.</td></tr>
-                    ) : (
-                      Object.entries(playersStats)
-                        .sort((a, b) => b[1].kills - a[1].kills)
-                        .map(([name, s]) => (
-                          <tr key={name}>
-                            <td><strong>{name}</strong></td>
-                            <td><span className="agent-tag">{s.agent || '—'}</span></td>
-                            <td className={`badge-team-${s.team}`}>{s.team === 'friendly' ? 'Aliado' : 'Inimigo'}</td>
-                            <td style={{ color: '#54d6a2', fontWeight: 600 }}>{s.kills}</td>
-                            <td style={{ color: '#ff6c83' }}>{s.deaths}</td>
-                            <td><strong>{s.kd_ratio}x</strong></td>
+              <div className="review-scoreboard-wrap">
+                <div className="scoreboard-filter-bar">
+                  <div className="rounds-chip-grid" style={{ marginBottom: 0 }}>
+                    <button
+                      type="button"
+                      className={`round-chip ${scoreboardTeamFilter === 'all' ? 'selected' : ''}`}
+                      onClick={() => setScoreboardTeamFilter('all')}
+                    >
+                      Todos ({cleanedPlayers.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`round-chip ${scoreboardTeamFilter === 'friendly' ? 'selected won' : ''}`}
+                      onClick={() => setScoreboardTeamFilter('friendly')}
+                    >
+                      Aliados ({cleanedPlayers.filter((p) => p.team === 'friendly').length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`round-chip ${scoreboardTeamFilter === 'enemy' ? 'selected lost' : ''}`}
+                      onClick={() => setScoreboardTeamFilter('enemy')}
+                    >
+                      Inimigos ({cleanedPlayers.filter((p) => p.team === 'enemy').length})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="scoreboard-table-container">
+                  <table className="review-scoreboard-table">
+                    <thead>
+                      <tr>
+                        <th>JOGADOR</th>
+                        <th>AGENTE</th>
+                        <th>TIME</th>
+                        <th className="col-center">ABATES</th>
+                        <th className="col-center">MORTES</th>
+                        <th className="col-center">K/D</th>
+                        <th className="col-center">HS %</th>
+                        <th className="col-center">1st KILL</th>
+                        <th className="col-center">1st DEATH</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPlayers.length === 0 ? (
+                        <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#778' }}>Nenhum jogador encontrado para este filtro.</td></tr>
+                      ) : (
+                        filteredPlayers.map((s, idx) => (
+                          <tr key={s.name}>
                             <td>
+                              <strong>{s.name}</strong>
+                              {idx === 0 && scoreboardTeamFilter === 'all' && (
+                                <span className="mvp-badge"><Trophy size={10} /> MVP</span>
+                              )}
+                            </td>
+                            <td><span className="agent-tag">{s.agent || '—'}</span></td>
+                            <td>
+                              <span className={`badge-team-${s.team}`}>
+                                {s.team === 'friendly' ? 'Aliado' : 'Inimigo'}
+                              </span>
+                            </td>
+                            <td className="col-center" style={{ color: '#54d6a2', fontWeight: 700 }}>{s.kills}</td>
+                            <td className="col-center" style={{ color: '#ff6c83' }}>{s.deaths}</td>
+                            <td className="col-center">
+                              <span className={`kd-badge ${Number(s.kd_ratio) >= 1.5 ? 'kd-high' : Number(s.kd_ratio) >= 1.0 ? 'kd-mid' : 'kd-low'}`}>
+                                {s.kd_ratio}x
+                              </span>
+                            </td>
+                            <td className="col-center">
                               <span className="kill-tag-hs">{s.headshot_rate}%</span>
                             </td>
-                            <td>{s.first_kills}</td>
+                            <td className="col-center">{s.first_kills}</td>
+                            <td className="col-center" style={{ color: '#94a3b8' }}>{s.first_deaths}</td>
                           </tr>
                         ))
-                    )}
-                  </tbody>
-                </table>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('kringAPI', {
   },
   toLocalVideoUrl: (filePath) => {
     if (!filePath) return '';
-    return `local-video://${filePath.replace(/\\/g, '/')}`;
+    return `local-video://media?path=${encodeURIComponent(filePath)}`;
   },
   onUpdaterStatus: (callback) => {
     const handler = (_event, data) => callback(data);

@@ -287,12 +287,23 @@ app.whenReady().then(() => {
   app.setAppUserModelId('com.kring.vlrstats');
 
   protocol.handle('local-video', (request) => {
-    let filePath = decodeURIComponent(request.url.replace(/^local-video:\/\//, ''));
-    // On Windows, if filePath starts with a slash before drive letter (e.g. /C:/...), strip leading slash
-    if (process.platform === 'win32' && filePath.startsWith('/') && filePath.length > 2 && filePath[2] === ':') {
-      filePath = filePath.slice(1);
+    try {
+      const url = new URL(request.url);
+      let targetPath = url.searchParams.get('path');
+      if (!targetPath) {
+        let raw = decodeURIComponent(request.url.replace(/^local-video:\/\//, ''));
+        if (process.platform === 'win32' && /^[a-zA-Z]\//.test(raw)) {
+          raw = raw[0].toUpperCase() + ':/' + raw.slice(2);
+        } else if (process.platform === 'win32' && raw.startsWith('/') && raw.length > 2 && raw[2] === ':') {
+          raw = raw.slice(1);
+        }
+        targetPath = raw;
+      }
+      return net.fetch(pathToFileURL(targetPath).toString());
+    } catch (err) {
+      console.error('[local-video] Erro ao carregar vídeo local:', err);
+      return new Response('Vídeo não encontrado', { status: 404 });
     }
-    return net.fetch(pathToFileURL(filePath).toString());
   });
 
   createWindow();

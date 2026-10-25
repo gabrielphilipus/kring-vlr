@@ -40,7 +40,12 @@ VALORANT_AGENTS = [
 IGNORE_WORDS = {
     "initiator", "duelist", "controller", "sentinel", "attacking", "defending",
     "spotted", "broadcast", "enemy", "spike", "planted", "round", "standard-custom",
-    "picking...", "locked", "select", "press", "tobuy", "buy phase"
+    "picking...", "locked", "select", "press", "tobuy", "buy phase",
+    "fense", "defense", "attack", "aliado", "inimigo", "agente", "jogador",
+    "vandal", "phantom", "sheriff", "ghost", "classic", "spectre", "operator",
+    "guardian", "ares", "odin", "stinger", "bucky", "judge", "marshal", "outlaw",
+    "frenzy", "shorty", "sidearm", "headshot", "kill", "death", "assist", "match",
+    "victory", "defeat", "high", "medium", "low", "sec"
 }
 
 
@@ -188,6 +193,11 @@ class ValorantAnalyzer:
         cleaned = raw_text.strip()
         norm = normalize_nick(cleaned)
 
+        # Reject pure numbers, math/ratio strings, or strings without ASCII letters
+        has_letters = bool(re.search(r"[a-zA-Z]", cleaned))
+        if not has_letters or len(cleaned) < 2 or norm in IGNORE_WORDS:
+            return ("Aliado" if team == "friendly" else "Inimigo", "Agente")
+
         # 1. Exact or substring match against known roster
         for r_norm, info in roster.items():
             if r_norm == norm or (len(r_norm) >= 4 and r_norm in norm) or (len(norm) >= 4 and norm in r_norm):
@@ -203,8 +213,15 @@ class ValorantAnalyzer:
                 # Return agent with generic player name
                 return (f"Jogador ({ag})", ag)
 
-        # 3. Clean player nickname if not in IGNORE_WORDS
-        if norm not in IGNORE_WORDS and len(cleaned) >= 2:
+        # 3. Clean player nickname if not in IGNORE_WORDS and has letters
+        if len(norm) >= 3 and norm not in IGNORE_WORDS:
+            # Check if there is an existing roster player with very close edit distance (diff <= 1)
+            for r_norm, info in roster.items():
+                if abs(len(r_norm) - len(norm)) <= 1:
+                    diffs = sum(1 for a, b in zip(r_norm, norm) if a != b) + abs(len(r_norm) - len(norm))
+                    if diffs <= 1:
+                        return (info["canonical_nick"], info["agent"])
+
             # Register dynamically into roster so future kills have same info
             roster[norm] = {"canonical_nick": cleaned, "agent": "Agente", "team": team}
             return (cleaned, "Agente")
@@ -488,41 +505,43 @@ class ValorantAnalyzer:
             killer = k["killer"]
             victim = k["victim"]
 
-            if killer not in players_stats:
-                players_stats[killer] = {
-                    "agent": k.get("killer_agent") or "Agente",
-                    "team": k["killer_team"],
-                    "kills": 0,
-                    "deaths": 0,
-                    "headshots": 0,
-                    "first_kills": 0,
-                    "first_deaths": 0,
-                }
-            elif players_stats[killer]["agent"] == "Agente" and k.get("killer_agent"):
-                players_stats[killer]["agent"] = k["killer_agent"]
+            if killer and killer not in ("Aliado", "Inimigo", "Agente") and not killer.startswith("Jogador ("):
+                if killer not in players_stats:
+                    players_stats[killer] = {
+                        "agent": k.get("killer_agent") or "Agente",
+                        "team": k["killer_team"],
+                        "kills": 0,
+                        "deaths": 0,
+                        "headshots": 0,
+                        "first_kills": 0,
+                        "first_deaths": 0,
+                    }
+                elif players_stats[killer]["agent"] == "Agente" and k.get("killer_agent"):
+                    players_stats[killer]["agent"] = k["killer_agent"]
 
-            players_stats[killer]["kills"] += 1
-            if k["headshot"]:
-                players_stats[killer]["headshots"] += 1
-            if k["first_kill"]:
-                players_stats[killer]["first_kills"] += 1
+                players_stats[killer]["kills"] += 1
+                if k["headshot"]:
+                    players_stats[killer]["headshots"] += 1
+                if k["first_kill"]:
+                    players_stats[killer]["first_kills"] += 1
 
-            if victim not in players_stats:
-                players_stats[victim] = {
-                    "agent": k.get("victim_agent") or "Agente",
-                    "team": k["victim_team"],
-                    "kills": 0,
-                    "deaths": 0,
-                    "headshots": 0,
-                    "first_kills": 0,
-                    "first_deaths": 0,
-                }
-            elif players_stats[victim]["agent"] == "Agente" and k.get("victim_agent"):
-                players_stats[victim]["agent"] = k["victim_agent"]
+            if victim and victim not in ("Aliado", "Inimigo", "Agente") and not victim.startswith("Jogador ("):
+                if victim not in players_stats:
+                    players_stats[victim] = {
+                        "agent": k.get("victim_agent") or "Agente",
+                        "team": k["victim_team"],
+                        "kills": 0,
+                        "deaths": 0,
+                        "headshots": 0,
+                        "first_kills": 0,
+                        "first_deaths": 0,
+                    }
+                elif players_stats[victim]["agent"] == "Agente" and k.get("victim_agent"):
+                    players_stats[victim]["agent"] = k["victim_agent"]
 
-            players_stats[victim]["deaths"] += 1
-            if k["first_kill"]:
-                players_stats[victim]["first_deaths"] += 1
+                players_stats[victim]["deaths"] += 1
+                if k["first_kill"]:
+                    players_stats[victim]["first_deaths"] += 1
 
         # Populate any roster players who had 0 kills/deaths into scoreboard
         for r_norm, info in roster.items():
