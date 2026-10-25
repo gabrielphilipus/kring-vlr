@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useKeyPress } from './hooks/useKeyPress.js';
 import { copyToClipboard } from './utils/clipboard.js';
 import {
   formatDate,
@@ -3795,14 +3796,7 @@ function LineupsPage({
   const countForMap = (map) =>
     allLineups.filter((item) => item.map === map).length;
 
-  useEffect(() => {
-    if (!previewLineup) return;
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') setPreviewLineup(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [previewLineup]);
+  useKeyPress('Escape', () => setPreviewLineup(null), Boolean(previewLineup));
 
   const copyInstructions = async (lineup) => {
     const text = `🎯 **Lineup: ${lineup.title}**\n📍 Mapa: ${lineup.map} | Agente: ${lineup.agent} | Lado: ${lineup.side || 'Ataque'}${lineup.ability ? ` | Habilidade: ${lineup.ability}` : ''}\n\n📝 **Instruções:**\n${lineup.instructions || 'Sem instruções registradas.'}${lineup.link ? `\n\n🔗 Referência: ${lineup.link}` : ''}`;
@@ -4982,14 +4976,7 @@ function TacticsPage({
   const countForMap = (map) =>
     tactics.filter((item) => item.map === map).length;
 
-  useEffect(() => {
-    if (!previewTactic) return;
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') setPreviewTactic(null);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [previewTactic]);
+  useKeyPress('Escape', () => setPreviewTactic(null), Boolean(previewTactic));
 
   const copyTactic = async (item) => {
     let text = `📖 **TÁTICO: ${item.title}**\n`;
@@ -7327,13 +7314,7 @@ function Field({ label, children }) {
 }
 
 function Modal({ title, subtitle, onClose, children }) {
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  useKeyPress('Escape', onClose);
   return (
     <div
       className="modal-backdrop"
