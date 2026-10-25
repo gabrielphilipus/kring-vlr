@@ -2,8 +2,6 @@ name: Build & Release Kring VLR
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   workflow_dispatch:

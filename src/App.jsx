@@ -139,7 +139,11 @@ function App() {
     try {
       const res = await window.kringAPI.checkForUpdates();
       if (!res?.ok) {
-        setToast(res?.error || res?.message || 'Nenhuma atualização encontrada.');
+        let msg = res?.error || res?.message || 'Nenhuma atualização encontrada.';
+        if (msg.includes('latest.yml') || msg.includes('404')) {
+          msg = 'Uma nova versão está sendo gerada no GitHub no momento. Aguarde cerca de 1 a 2 minutos e tente novamente.';
+        }
+        setToast(msg);
       }
     } catch {
       setToast('Erro ao consultar atualizações.');

@@ -340,10 +340,21 @@ app.whenReady().then(() => {
       });
     });
 
+    function formatUpdaterError(err) {
+      const msg = err?.message || String(err);
+      if (msg.includes('latest.yml') || msg.includes('404')) {
+        return 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.';
+      }
+      if (msg.includes('net::ERR_INTERNET_DISCONNECTED') || msg.includes('ENOTFOUND')) {
+        return 'Sem conexão com a internet para verificar atualizações.';
+      }
+      return `Erro ao verificar atualizações: ${msg}`;
+    }
+
     autoUpdater.on('error', (err) => {
       mainWindow?.webContents.send('updater:status', {
         status: 'error',
-        message: `Erro ao buscar atualização: ${err?.message || err}`
+        message: formatUpdaterError(err)
       });
     });
 
@@ -361,7 +372,13 @@ app.whenReady().then(() => {
         const res = await autoUpdater.checkForUpdates();
         return { ok: true, updateInfo: res?.updateInfo };
       } catch (err) {
-        return { ok: false, error: err?.message || String(err) };
+        const msg = err?.message || String(err);
+        const friendly = (msg.includes('latest.yml') || msg.includes('404'))
+          ? 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.'
+          : (msg.includes('net::ERR_INTERNET_DISCONNECTED') || msg.includes('ENOTFOUND'))
+          ? 'Sem conexão com a internet.'
+          : `Erro: ${msg}`;
+        return { ok: false, error: friendly };
       }
     }
     return { ok: false, message: 'Modo de desenvolvimento (app não empacotado)' };
