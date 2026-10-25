@@ -1,0 +1,10 @@
+node_modules/
+dist/
+release/
+build/
+analyzer/dist/
+analyzer/build/
+*.mp4
+package-lock.json
+public/catalogs.json
+*.md
