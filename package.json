@@ -1,6 +1,6 @@
 {
   "name": "kring-vlr",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Painel pessoal de VODs, lineups e estatísticas para Valorant",
   "main": "electron/main.cjs",
   "author": "Kring",
@@ -34,7 +34,8 @@
     "publish": {
       "provider": "github",
       "owner": "gabrielphilipus",
-      "repo": "kring-vlr"
+      "repo": "kring-vlr",
+      "releaseType": "release"
     },
     "asar": true,
     "directories": {

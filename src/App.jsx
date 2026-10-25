@@ -4,7 +4,7 @@ import {
   Check, ChevronDown, CircleHelp, ClipboardPaste, Crosshair, ExternalLink, FileVideo2,
   Filter, FolderOpen, Gamepad2, LayoutDashboard, ListFilter, Map as MapIcon,
   Pencil, Plus, Search, ShieldCheck, Swords, Target, Trash2, Trophy,
-  Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles,
+  Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles, Sun, Moon,
 } from 'lucide-react';
 
 
@@ -111,7 +111,13 @@ function App() {
   const [toast, setToast] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
   const [vodAnalysis, setVodAnalysis] = useState({ busy: false, progress: 0, message: '' });
+  const [theme, setTheme] = useState(() => localStorage.getItem('kring-theme') || 'dark');
   const imageInputRef = useRef(null);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('kring-theme', theme);
+  }, [theme]);
   const vodFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const defaultsImportRef = useRef(null);
@@ -593,6 +599,15 @@ function App() {
         <header className="topbar">
           <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{pageTitle}</strong></div>
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="button button-quiet button-small theme-toggle-btn"
+              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+              title={theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+            >
+              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              <span>{theme === 'dark' ? 'Claro' : 'Escuro'}</span>
+            </button>
             <button className="button button-quiet button-small" onClick={exportBackup} title="Exportar uma cópia de segurança"><ArrowDownToLine size={15} /> Backup</button>
             <button className="button button-quiet button-small" onClick={() => importInputRef.current?.click()} title="Importar uma cópia de segurança"><ArrowUpFromLine size={15} /> Importar</button>
             {view !== 'veto' && view !== 'stats' && view !== 'tactics' && <button className="button button-primary button-small" onClick={() => openCreate(view === 'lineups' ? 'lineup' : view === 'training' ? 'training' : view === 'gameplans' ? 'gameplan' : view === 'catalogs' ? 'catalogMap' : 'vod')}><Plus size={16} /> {view === 'lineups' ? 'Nova lineup' : view === 'training' ? 'Adicionar treino' : view === 'gameplans' ? 'Novo Gameplan' : view === 'catalogs' ? 'Adicionar mapa' : 'Adicionar VOD'}</button>}
