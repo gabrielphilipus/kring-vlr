@@ -230,14 +230,16 @@ graph LR
 
 ## 6. Detalhes Cruciais de Implementação e Correções Recentes
 
-### A. Protocolo de Vídeo Local (`local-video://`)
-* **Problema Resolvido:** O Chromium tratava `local-video://C:/...` encarando `C:` como host e engolindo os dois pontos (`:`), tornando o caminho inválido no Windows.
+### A. Protocolo de Vídeo Local (`local-video://`) e Streaming HTTP 206
+* **Problema Resolvido:** O Chromium tratava `local-video://C:/...` encarando `C:` como host e engolindo os dois pontos (`:`), tornando o caminho inválido no Windows. Além disso, cliques rápidos em múltiplos lances geravam sobrecarga de requisições de demuxer.
 * **Implementação Vigente:**
   * No [electron/preload.cjs](file:///c:/AnaliseValorant/electron/preload.cjs):
     `toLocalVideoUrl: (filePath) => 'local-video://media?path=' + encodeURIComponent(filePath)`
   * No [electron/main.cjs](file:///c:/AnaliseValorant/electron/main.cjs):
-    Lê `new URL(request.url).searchParams.get('path')` e passa para `net.fetch(pathToFileURL(targetPath).toString())`.
-  * **Resultado:** Streaming acelerado por GPU com busca precisa (seek), controle de velocidade (0.5x a 1.5x) e zero falhas de rota.
+    Utiliza streams nativas do Node (`nodeFs.createReadStream`) com suporte completo ao cabeçalho `Range:` e resposta `206 Partial Content` encapsulada via `Readable.toWeb`.
+  * No [src/App.jsx](file:///c:/AnaliseValorant/src/App.jsx):
+    Salto temporal configurável com opção de **Momento Exato (0s)**, `-3s setup` ou `-5s`, protegido por debounce de 30ms e verificação `video.paused` para evitar deadlocks de pipeline do Chromium em cliques sucessivos.
+  * **Resultado:** Vídeo busca instantaneamente o segundo exato com zero travamentos mesmo ao clicar rapidamente em múltiplos eventos.
 
 ### B. Otimização do Motor de Análise (`analyzer/analyzer.py`)
 * **Aceleração do Killfeed:** 

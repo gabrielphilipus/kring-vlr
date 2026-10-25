@@ -1228,12 +1228,14 @@ function formatDiscordReport(vod) {
 
 function InteractiveVodReviewModal({ vod, onClose, onToast }) {
   const videoRef = useRef(null);
+  const seekTimeoutRef = useRef(null);
   const [selectedRound, setSelectedRound] = useState(0); // 0 = all
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'scoreboard'
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [activeKill, setActiveKill] = useState(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [scoreboardTeamFilter, setScoreboardTeamFilter] = useState('all');
+  const [jumpOffset, setJumpOffset] = useState(0); // 0 = tempo exato do abate, 3 = -3s de setup
 
   const videoUrl = window.kringAPI?.toLocalVideoUrl && vod.localVideoPath
     ? window.kringAPI.toLocalVideoUrl(vod.localVideoPath)
@@ -1260,17 +1262,44 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
   };
 
   const seekTo = (seconds, killItem = null) => {
-    if (videoRef.current && Number.isFinite(seconds)) {
-      videoRef.current.currentTime = Math.max(0, seconds - 4); // 4 seconds pre-roll
-      videoRef.current.play().catch(() => {});
-      if (killItem) setActiveKill(killItem);
+    if (killItem) setActiveKill(killItem);
+    if (!Number.isFinite(seconds)) return;
+    const targetSec = Math.max(0, seconds - jumpOffset);
+
+    // Cancel pending seek to avoid browser demuxer overload from rapid clicks
+    if (seekTimeoutRef.current) {
+      clearTimeout(seekTimeoutRef.current);
     }
+
+    seekTimeoutRef.current = setTimeout(() => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      try {
+        if (typeof video.fastSeek === 'function') {
+          video.fastSeek(targetSec);
+        } else {
+          video.currentTime = targetSec;
+        }
+
+        // Only start play if paused, to avoid Promise spamming
+        if (video.paused) {
+          const p = video.play();
+          if (p !== undefined) {
+            p.catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('[ReviewPlayer] Erro suave ao saltar:', err);
+      }
+    }, 30);
   };
 
   const parseTimeToSeconds = (str) => {
     if (!str) return 0;
-    const parts = str.split(':');
-    if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    const parts = str.split(':').map((p) => parseInt(p, 10));
+    if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+    if (parts.length === 2) return (parts[0] * 60) + parts[1];
     return 0;
   };
 
@@ -1458,9 +1487,39 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
                     </button>
                   ))}
                 </div>
+                <div className="speed-group" title="Modo de salto ao clicar nos abates">
+                  <span className="speed-label">Salto:</span>
+                  <button
+                    type="button"
+                    className={`speed-chip ${jumpOffset === 0 ? 'active' : ''}`}
+                    onClick={() => setJumpOffset(0)}
+                    title="Ir exatamente no segundo do abate registrado"
+                  >
+                    Exato (0s)
+                  </button>
+                  <button
+                    type="button"
+                    className={`speed-chip ${jumpOffset === 3 ? 'active' : ''}`}
+                    onClick={() => setJumpOffset(3)}
+                    title="Pular 3 segundos antes do abate (preparação do tiro)"
+                  >
+                    -3s
+                  </button>
+                  <button
+                    type="button"
+                    className={`speed-chip ${jumpOffset === 5 ? 'active' : ''}`}
+                    onClick={() => setJumpOffset(5)}
+                    title="Pular 5 segundos antes do abate"
+                  >
+                    -5s
+                  </button>
+                </div>
               </div>
               <div className="video-controls-info">
-                <span><Clock size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Clique no abate para saltar (-4s de setup)</span>
+                <span>
+                  <Clock size={13} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                  {jumpOffset === 0 ? 'Clique no abate para ir ao momento exato' : `Salto com ${jumpOffset}s de pré-lance`}
+                </span>
               </div>
             </div>
           </div>
@@ -1509,7 +1568,7 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
                         key={i}
                         className={`review-event-card ${activeKill === k ? 'active-playing' : ''}`}
                         onClick={() => seekTo(k.timestamp_sec ?? parseTimeToSeconds(k.time), k)}
-                        title="Clique para ir para este lance no vídeo (-4s de setup)"
+                        title="Clique para ir para este lance no vídeo"
                       >
                         <div className="review-event-left">
                           <span className="review-time-badge">{k.time}</span>

@@ -3,6 +3,8 @@ const { autoUpdater } = require('electron-updater');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs/promises');
+const nodeFs = require('node:fs');
+const { Readable } = require('node:stream');
 const path = require('node:path');
 
 // Register custom protocol for high-performance hardware-accelerated local video playback
@@ -286,7 +288,7 @@ function createWindow() {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.kring.vlrstats');
 
-  protocol.handle('local-video', (request) => {
+  protocol.handle('local-video', async (request) => {
     try {
       const url = new URL(request.url);
       let targetPath = url.searchParams.get('path');
@@ -299,10 +301,53 @@ app.whenReady().then(() => {
         }
         targetPath = raw;
       }
-      return net.fetch(pathToFileURL(targetPath).toString());
+
+      const stat = await fs.stat(targetPath);
+      const fileSize = stat.size;
+      const rangeHeader = request.headers.get('range');
+
+      const ext = path.extname(targetPath).toLowerCase();
+      const mimeTypes = {
+        '.mp4': 'video/mp4',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+      };
+      const contentType = mimeTypes[ext] || 'video/mp4';
+
+      if (rangeHeader) {
+        const parts = rangeHeader.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = (end - start) + 1;
+        const nodeStream = nodeFs.createReadStream(targetPath, { start, end });
+        const webStream = Readable.toWeb(nodeStream);
+
+        return new Response(webStream, {
+          status: 206,
+          headers: {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(chunkSize),
+            'Content-Type': contentType,
+          },
+        });
+      }
+
+      const nodeStream = nodeFs.createReadStream(targetPath);
+      const webStream = Readable.toWeb(nodeStream);
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Content-Length': String(fileSize),
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+        },
+      });
     } catch (err) {
-      console.error('[local-video] Erro ao carregar vídeo local:', err);
-      return new Response('Vídeo não encontrado', { status: 404 });
+      console.error('[local-video] Erro ao servir vídeo local:', err);
+      return new Response('Vídeo não encontrado: ' + (err?.message || err), { status: 404 });
     }
   });
 

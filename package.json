@@ -1,6 +1,6 @@
 {
   "name": "kring-vlr",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Painel pessoal de VODs, lineups e estatísticas para Valorant",
   "main": "electron/main.cjs",
   "author": "Kring",
