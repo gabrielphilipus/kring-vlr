@@ -32,6 +32,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Python dependencies & Build standalone analyzer
+        run: |
+          pip install pyinstaller rapidocr-onnxruntime opencv-python numpy onnxruntime
+          python analyzer/build_exe.py
+
       - name: Install Node dependencies
         run: npm install
 

@@ -20,6 +20,11 @@ __pycache__/
 *$py.class
 temp_test/
 *.log
+analyzer/dist/
+analyzer/build/
+analyzer/*.exe
+*.exe
+*.spec
 
 # Environment and IDE
 .env

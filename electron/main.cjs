@@ -189,7 +189,9 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
 
     currentAnalyzerProcess = pythonProcess;
     let finalResult = null;
+    let reportedError = null;
     let stdoutBuffer = '';
+    let stderrBuffer = '';
 
     pythonProcess.stdout.on('data', (chunk) => {
       stdoutBuffer += chunk.toString('utf8');
@@ -205,6 +207,9 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
             mainWindow?.webContents.send('vod:progress', parsed);
           } else if (parsed.type === 'kill_event') {
             mainWindow?.webContents.send('vod:kill-event', parsed.event);
+          } else if (parsed.type === 'error') {
+            reportedError = parsed.message;
+            mainWindow?.webContents.send('vod:error', parsed.message);
           } else if (parsed.type === 'complete') {
             finalResult = parsed.data;
           }
@@ -213,23 +218,29 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
     });
 
     pythonProcess.stderr.on('data', (chunk) => {
-      console.warn('[Analyzer STDERR]', chunk.toString('utf8'));
+      const text = chunk.toString('utf8');
+      stderrBuffer += text;
+      console.warn('[Analyzer STDERR]', text);
     });
 
     pythonProcess.on('close', (code) => {
       currentAnalyzerProcess = null;
-      if (code === 0 && finalResult) {
+      if (reportedError) {
+        resolve({ ok: false, error: reportedError });
+      } else if (code === 0 && finalResult) {
         resolve({ ok: true, data: finalResult });
       } else if (code === 0) {
         try {
           const parsed = JSON.parse(stdoutBuffer.trim());
           if (parsed.type === 'complete') resolve({ ok: true, data: parsed.data });
+          else if (parsed.type === 'error') resolve({ ok: false, error: parsed.message });
           else resolve({ ok: true, data: parsed });
         } catch {
           resolve({ ok: false, error: 'A análise foi concluída, mas o JSON final não pôde ser lido.' });
         }
       } else {
-        resolve({ ok: false, error: `Processo encerrado com código ${code}.` });
+        const detail = stderrBuffer.trim() ? `: ${stderrBuffer.trim().slice(-300)}` : '';
+        resolve({ ok: false, error: `Processo do analisador encerrou com erro (código ${code})${detail}` });
       }
     });
 

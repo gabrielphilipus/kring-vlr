@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('kringAPI', {
     ipcRenderer.on('vod:kill-event', handler);
     return () => ipcRenderer.removeListener('vod:kill-event', handler);
   },
+  onVodError: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('vod:error', handler);
+    return () => ipcRenderer.removeListener('vod:error', handler);
+  },
   toLocalVideoUrl: (filePath) => {
     if (!filePath) return '';
     return `local-video://media?path=${encodeURIComponent(filePath)}`;

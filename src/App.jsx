@@ -266,9 +266,14 @@ function App() {
         liveKills: [event, ...prev.liveKills.slice(0, 24)],
       }));
     });
+    const unsubError = window.kringAPI.onVodError ? window.kringAPI.onVodError((errMsg) => {
+      setToast(errMsg);
+      setScrimProgress((prev) => ({ ...prev, busy: false, message: errMsg }));
+    }) : null;
     return () => {
       if (unsubProgress) unsubProgress();
       if (unsubKill) unsubKill();
+      if (unsubError) unsubError();
     };
   }, []);
 
@@ -635,7 +640,7 @@ function App() {
           <div className="sidebar-footer">
             <span className="status-dot" />
             <span>Kring VLR</span>
-            <span className="version">v1.0.11</span>
+            <span className="version">v1.0.15</span>
             <button
               type="button"
               className="updater-check-btn"

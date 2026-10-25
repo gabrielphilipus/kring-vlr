@@ -26,8 +26,19 @@ if hasattr(sys.stdout, "reconfigure"):
 try:
     from rapidocr_onnxruntime import RapidOCR
     RAPID_OCR_AVAILABLE = True
-except ImportError:
+    RAPID_OCR_ERROR = None
+except Exception as e:
     RAPID_OCR_AVAILABLE = False
+    RAPID_OCR_ERROR = str(e)
+
+
+def get_base_dir() -> str:
+    """Returns the base directory whether running as script or packaged PyInstaller executable."""
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            return sys._MEIPASS
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 VALORANT_AGENTS = [
@@ -62,20 +73,31 @@ def normalize_nick(txt: str) -> str:
 class ValorantAnalyzer:
     def __init__(self, templates_dir: str = None):
         if templates_dir is None:
-            templates_dir = os.path.join(os.path.dirname(__file__), "templates")
+            templates_dir = os.path.join(get_base_dir(), "templates")
         
         self.templates_dir = templates_dir
         self.tmpl_friendly = cv2.imread(os.path.join(templates_dir, "hs_friendly.png"))
         self.tmpl_enemy = cv2.imread(os.path.join(templates_dir, "hs_enemy.png"))
+        self.ocr = None
+        self.ocr_error = None
         
         if RAPID_OCR_AVAILABLE:
+            # 1. Try DirectML GPU acceleration first
             try:
-                # Prioritize DirectML on Windows (e.g. NVIDIA GTX 1650) for fast GPU inference
-                self.ocr = RapidOCR(det_use_dml=True, cls_use_dml=True, rec_use_dml=True)
+                test_ocr = RapidOCR(det_use_dml=True, cls_use_dml=True, rec_use_dml=True)
+                # Verify that DirectML actually runs without shader / driver failures
+                dummy_img = np.zeros((32, 32, 3), dtype=np.uint8)
+                test_ocr(dummy_img)
+                self.ocr = test_ocr
             except Exception:
-                self.ocr = RapidOCR()
+                # 2. Fall back to CPU inference if DirectML fails on this GPU/driver
+                try:
+                    self.ocr = RapidOCR(det_use_dml=False, cls_use_dml=False, rec_use_dml=False)
+                except Exception as cpu_err:
+                    self.ocr = None
+                    self.ocr_error = str(cpu_err)
         else:
-            self.ocr = None
+            self.ocr_error = RAPID_OCR_ERROR or "Biblioteca 'rapidocr_onnxruntime' não instalada."
 
     def discover_roster(self, cap, fps, user_nick=None, user_agent=None):
         """
@@ -265,6 +287,19 @@ class ValorantAnalyzer:
 
         # Discover Roster & Match Start
         print(json.dumps({"type": "status", "message": "Identificando jogadores e agentes da partida..."}), flush=True)
+
+        if not self.ocr:
+            err_msg = (
+                "Motor de OCR não pôde ser iniciado. "
+                "Para analisar vídeos locais, instale as dependências executando: "
+                "pip install rapidocr-onnxruntime opencv-python onnxruntime"
+            )
+            if self.ocr_error:
+                err_msg += f" (Detalhe: {self.ocr_error})"
+            print(json.dumps({"type": "error", "message": err_msg}), flush=True)
+            cap.release()
+            raise RuntimeError(err_msg)
+
         roster, gameplay_start_sec = self.discover_roster(cap, fps, user_nick=user_nick, user_agent=user_agent)
 
         frame_step = max(1, int(fps * sample_interval_sec))
@@ -329,12 +364,18 @@ class ValorantAnalyzer:
                             detected_friendly = friendly_digits[0]
                             detected_enemy = enemy_digits[0]
 
-                            # In Valorant, score increments by exactly +1 for the winning team
-                            friendly_scored = (detected_friendly == current_score_friendly + 1 and detected_enemy == current_score_enemy)
-                            enemy_scored = (detected_enemy == current_score_enemy + 1 and detected_friendly == current_score_friendly)
+                            friendly_diff = detected_friendly - current_score_friendly
+                            enemy_diff = detected_enemy - current_score_enemy
 
-                            if friendly_scored or enemy_scored:
-                                winner = "friendly" if friendly_scored else "enemy"
+                            # Standard +1 transition for winning team or safe catch-up (diff <= 2)
+                            is_valid_transition = False
+                            if (friendly_diff == 1 and enemy_diff == 0) or (enemy_diff == 1 and friendly_diff == 0):
+                                is_valid_transition = True
+                            elif 0 <= friendly_diff <= 2 and 0 <= enemy_diff <= 2 and (friendly_diff + enemy_diff > 0):
+                                is_valid_transition = True
+
+                            if is_valid_transition:
+                                winner = "friendly" if friendly_diff >= enemy_diff else "enemy"
                                 rounds.append({
                                     "round_number": current_round_num,
                                     "start_time": format_time(current_round_start_time),
@@ -344,7 +385,7 @@ class ValorantAnalyzer:
                                     "kills": current_round_kills,
                                 })
 
-                                current_round_num += 1
+                                current_round_num += max(1, friendly_diff + enemy_diff)
                                 current_score_friendly = detected_friendly
                                 current_score_enemy = detected_enemy
                                 current_round_kills = []
@@ -356,11 +397,16 @@ class ValorantAnalyzer:
                 kx, ky, kw, kh = kf_roi
                 kf_crop = frame[ky:ky+kh, kx:kx+kw]
 
-                green_mask = (kf_crop[:, :, 1] > 115) & (kf_crop[:, :, 1] > kf_crop[:, :, 2] + 25)
-                red_mask = (kf_crop[:, :, 2] > 130) & (kf_crop[:, :, 2] > kf_crop[:, :, 1] + 25)
+                green_mask = (kf_crop[:, :, 1] > 115) & (kf_crop[:, :, 1] > kf_crop[:, :, 2] + 20)
+                # Support Red (default), Purple (Protanopia), and Yellow (Deuteranopia/Tritanopia) enemy highlight
+                red_mask = (kf_crop[:, :, 2] > 125) & (kf_crop[:, :, 2] > kf_crop[:, :, 1] + 20)
+                purple_mask = (kf_crop[:, :, 2] > 120) & (kf_crop[:, :, 0] > 120) & (kf_crop[:, :, 1] < 100)
+                yellow_mask = (kf_crop[:, :, 2] > 125) & (kf_crop[:, :, 1] > 125) & (kf_crop[:, :, 0] < 100)
+                enemy_mask = red_mask | purple_mask | yellow_mask
+
                 g_sum = int(np.sum(green_mask))
-                r_sum = int(np.sum(red_mask))
-                has_kill_banner = (g_sum > 750) or (r_sum > 750)
+                e_sum = int(np.sum(enemy_mask))
+                has_kill_banner = (g_sum > 650) or (e_sum > 650)
 
                 kf_gray = cv2.cvtColor(kf_crop, cv2.COLOR_BGR2GRAY)
                 kf_diff = float(np.mean(cv2.absdiff(kf_gray, last_kf_gray))) if last_kf_gray is not None else 999.0
@@ -390,16 +436,20 @@ class ValorantAnalyzer:
                             y_end = min(kh, (r_idx + 1) * row_height)
                             row_crop = kf_crop[y_start:y_end, :]
 
-                            r_green = (row_crop[:, :, 1] > 110) & (row_crop[:, :, 1] > row_crop[:, :, 2] + 20)
-                            r_red = (row_crop[:, :, 2] > 125) & (row_crop[:, :, 2] > row_crop[:, :, 1] + 20)
-                            if np.sum(r_green) < 150 and np.sum(r_red) < 150:
+                            r_green = (row_crop[:, :, 1] > 110) & (row_crop[:, :, 1] > row_crop[:, :, 2] + 15)
+                            r_red = (row_crop[:, :, 2] > 120) & (row_crop[:, :, 2] > row_crop[:, :, 1] + 15)
+                            r_purple = (row_crop[:, :, 2] > 110) & (row_crop[:, :, 0] > 110) & (row_crop[:, :, 1] < 100)
+                            r_yellow = (row_crop[:, :, 2] > 120) & (row_crop[:, :, 1] > 120) & (row_crop[:, :, 0] < 100)
+                            r_enemy = r_red | r_purple | r_yellow
+
+                            if np.sum(r_green) < 130 and np.sum(r_enemy) < 130:
                                 continue
 
                             mid_x = row_crop.shape[1] // 2
                             left_green = np.sum(r_green[:, :mid_x])
-                            left_red = np.sum(r_red[:, :mid_x])
+                            left_enemy = np.sum(r_enemy[:, :mid_x])
 
-                            if left_green > left_red:
+                            if left_green > left_enemy:
                                 killer_team = "friendly"
                                 victim_team = "enemy"
                             else:
