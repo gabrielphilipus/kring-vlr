@@ -7,7 +7,7 @@ const mockApp = {
   isPackaged: false,
   getPath: vi.fn(() => 'C:\\mock-fallback-dir'),
   getAppPath: vi.fn(() => process.cwd()),
-  getVersion: vi.fn(() => '1.0.15'),
+  getVersion: vi.fn(() => '1.0.16-beta.1'),
   getName: vi.fn(() => 'kring-vlr'),
   whenReady: vi.fn(() => new Promise(() => {})),
   on: vi.fn(),
