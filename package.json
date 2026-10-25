@@ -9,11 +9,12 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
+    "test": "vitest run",
     "lint": "eslint . && ruff check analyzer/",
     "lint:js": "eslint .",
     "lint:py": "ruff check analyzer/",
     "format:check": "prettier --check .",
-    "check": "npm run lint && npm run build && node --check electron/main.cjs electron/preload.cjs && python -m py_compile analyzer/analyzer.py",
+    "check": "npm test && npm run lint && npm run build && node --check electron/main.cjs electron/preload.cjs && python -m py_compile analyzer/analyzer.py",
     "dist:win": "npm run build && electron-builder --win nsis",
     "dist:portable": "npm run build && electron-builder --win portable"
   },
@@ -36,6 +37,7 @@
     "globals": "^17.13.0",
     "prettier": "^3.9.10",
     "vite": "^7.1.7",
+    "vitest": "^5.0.5",
     "wait-on": "^8.0.4"
   },
   "build": {
