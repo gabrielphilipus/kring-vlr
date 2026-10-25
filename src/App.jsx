@@ -1118,7 +1118,12 @@ function VetoSimulator({ maps, mapsStats = [], onToast }) {
   const [format, setFormat] = useState('bo3');
   const [grandFinal, setGrandFinal] = useState(false);
   const [upperTeam, setUpperTeam] = useState('A');
-  const [pool, setPool] = useState(() => mapNames.slice(0, 7));
+  const [selectedPool, setSelectedPool] = useState(null);
+  const pool = useMemo(() => {
+    const base = selectedPool ?? mapNames;
+    const kept = base.filter((name) => mapNames.includes(name)).slice(0, 7);
+    return kept.length >= 7 ? kept : [...kept, ...mapNames.filter((name) => !kept.includes(name)).slice(0, 7 - kept.length)];
+  }, [selectedPool, mapNames]);
   const mapArtwork = Object.fromEntries(maps.filter((item) => item.previewUrl).map((item) => [item.name, item.previewUrl]));
   const [myTeam, setMyTeam] = useState('A');
   const [teamNames, setTeamNames] = useState({ A: 'Time A', B: 'Time B' });
@@ -1126,13 +1131,6 @@ function VetoSimulator({ maps, mapsStats = [], onToast }) {
   const [started, setStarted] = useState(false);
   const [coinResult, setCoinResult] = useState(null);
   const [isFlipping, setIsFlipping] = useState(false);
-
-  useEffect(() => {
-    if (!started) setPool((previous) => {
-      const kept = previous.filter((name) => mapNames.includes(name)).slice(0, 7);
-      return kept.length >= 7 ? kept : [...kept, ...mapNames.filter((name) => !kept.includes(name)).slice(0, 7 - kept.length)];
-    });
-  }, [mapNames.join('|'), started]);
 
   const statsByMap = useMemo(() => {
     const map = new Map();
@@ -1218,11 +1216,14 @@ function VetoSimulator({ maps, mapsStats = [], onToast }) {
     }
   };
 
-  const changePool = (map) => setPool((previous) => previous.includes(map)
-    ? previous.filter((item) => item !== map)
-    : previous.length < 7 ? [...previous, map] : previous);
+  const changePool = (map) => setSelectedPool((previous) => {
+    const current = previous ?? pool;
+    return current.includes(map)
+      ? current.filter((item) => item !== map)
+      : current.length < 7 ? [...current, map] : current;
+  });
   const start = () => { setHistory([]); setStarted(true); };
-  const reset = () => { setHistory([]); setStarted(false); setCoinResult(null); };
+  const reset = () => { setHistory([]); setStarted(false); setCoinResult(null); setSelectedPool(null); };
   const choose = (value) => {
     if (!currentStep) return;
     setHistory((previous) => [...previous, { ...currentStep, ...(currentStep.kind === 'side' ? { side: value, map: activeMap } : { map: value }) }]);
@@ -3801,7 +3802,6 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
   const analysis = vod.analysisData || {};
   const rounds = analysis.rounds || [];
   const allKills = analysis.all_kills || [];
-  const playersStats = analysis.players_stats || {};
 
   const displayedKills = selectedRound === 0
     ? allKills
@@ -3872,7 +3872,7 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
 
   // Clean, normalize and cluster OCR player stats into real match participants
   const cleanedPlayers = useMemo(() => {
-    const raw = playersStats;
+    const raw = vod.analysisData?.players_stats;
     if (!raw || typeof raw !== 'object') return [];
 
     const WEAPONS_AND_IGNORE = new Set([
@@ -3962,7 +3962,7 @@ function InteractiveVodReviewModal({ vod, onClose, onToast }) {
         first_deaths: p.first_deaths,
       }))
       .sort((a, b) => b.kills - a.kills);
-  }, [playersStats]);
+  }, [vod.analysisData?.players_stats]);
 
   const filteredPlayers = useMemo(() => {
     if (scoreboardTeamFilter === 'friendly') return cleanedPlayers.filter((p) => p.team === 'friendly');
