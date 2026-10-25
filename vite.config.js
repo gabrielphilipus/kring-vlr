@@ -8,9 +8,12 @@ const require = createRequire(import.meta.url);
 
 function tesseractAssets() {
   const coreNames = [
-    'tesseract-core-lstm.wasm.js', 'tesseract-core-lstm.wasm',
-    'tesseract-core-simd-lstm.wasm.js', 'tesseract-core-simd-lstm.wasm',
-    'tesseract-core-relaxedsimd-lstm.wasm.js', 'tesseract-core-relaxedsimd-lstm.wasm',
+    'tesseract-core-lstm.wasm.js',
+    'tesseract-core-lstm.wasm',
+    'tesseract-core-simd-lstm.wasm.js',
+    'tesseract-core-simd-lstm.wasm',
+    'tesseract-core-relaxedsimd-lstm.wasm.js',
+    'tesseract-core-relaxedsimd-lstm.wasm',
   ];
   const assets = () => {
     const coreDir = path.dirname(require.resolve('tesseract.js-core'));
@@ -26,16 +29,30 @@ function tesseractAssets() {
     name: 'tesseract-local-assets',
     configureServer(server) {
       server.middlewares.use('/ocr', (req, res, next) => {
-        const name = decodeURIComponent((req.url || '').split('?')[0].replace(/^\//, ''));
+        const name = decodeURIComponent(
+          (req.url || '').split('?')[0].replace(/^\//, '')
+        );
         const item = assets().find(([assetName]) => assetName === name);
         if (!item) return next();
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', name.endsWith('.wasm') ? 'application/wasm' : name.endsWith('.gz') ? 'application/gzip' : 'application/javascript');
+        res.setHeader(
+          'Content-Type',
+          name.endsWith('.wasm')
+            ? 'application/wasm'
+            : name.endsWith('.gz')
+              ? 'application/gzip'
+              : 'application/javascript'
+        );
         fs.createReadStream(item[1]).pipe(res);
       });
     },
     generateBundle() {
-      for (const [name, file] of assets()) this.emitFile({ type: 'asset', fileName: `ocr/${name}`, source: fs.readFileSync(file) });
+      for (const [name, file] of assets())
+        this.emitFile({
+          type: 'asset',
+          fileName: `ocr/${name}`,
+          source: fs.readFileSync(file),
+        });
     },
   };
 }

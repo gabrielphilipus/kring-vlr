@@ -1,4 +1,11 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, protocol } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  dialog,
+  protocol,
+} = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
@@ -22,9 +29,22 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow;
 let currentAnalyzerProcess = null;
-const dataFile = () => path.join(app.getPath('userData'), 'kring-vlr-data.json');
-const emptyData = () => ({ vods: [], lineups: [], tactics: [], training: [], gameplans: [], schemaVersion: 3 });
-const seedFile = () => path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public', 'catalogs.json');
+const dataFile = () =>
+  path.join(app.getPath('userData'), 'kring-vlr-data.json');
+const emptyData = () => ({
+  vods: [],
+  lineups: [],
+  tactics: [],
+  training: [],
+  gameplans: [],
+  schemaVersion: 3,
+});
+const seedFile = () =>
+  path.join(
+    app.getAppPath(),
+    app.isPackaged ? 'dist' : 'public',
+    'catalogs.json'
+  );
 
 let lastRotatingBackupTime = 0;
 const ROTATING_BACKUP_INTERVAL_MS = 30 * 60 * 1000;
@@ -65,9 +85,16 @@ async function rotateBackups() {
       for (const item of toDelete) {
         try {
           await fs.unlink(item.filePath);
-          console.info('[rotateBackups] Backup antigo removido:', path.basename(item.filePath));
+          console.info(
+            '[rotateBackups] Backup antigo removido:',
+            path.basename(item.filePath)
+          );
         } catch (unlinkErr) {
-          console.error('[rotateBackups] Falha ao excluir backup antigo:', item.filePath, unlinkErr);
+          console.error(
+            '[rotateBackups] Falha ao excluir backup antigo:',
+            item.filePath,
+            unlinkErr
+          );
         }
       }
     }
@@ -78,7 +105,7 @@ async function rotateBackups() {
 
 async function createRotatingBackupIfNeeded(force = false) {
   const now = Date.now();
-  if (!force && (now - lastRotatingBackupTime < ROTATING_BACKUP_INTERVAL_MS)) {
+  if (!force && now - lastRotatingBackupTime < ROTATING_BACKUP_INTERVAL_MS) {
     return;
   }
   const file = dataFile();
@@ -90,12 +117,18 @@ async function createRotatingBackupIfNeeded(force = false) {
       const backupPath = path.join(dir, getRotatingBackupName());
       await fs.copyFile(file, backupPath);
       lastRotatingBackupTime = now;
-      console.info('[createRotatingBackup] Backup rotativo criado:', path.basename(backupPath));
+      console.info(
+        '[createRotatingBackup] Backup rotativo criado:',
+        path.basename(backupPath)
+      );
       await rotateBackups();
     }
   } catch (backupErr) {
     if (backupErr?.code !== 'ENOENT') {
-      console.error('[createRotatingBackup] Erro ao ler dados para backup rotativo:', backupErr);
+      console.error(
+        '[createRotatingBackup] Erro ao ler dados para backup rotativo:',
+        backupErr
+      );
     }
   }
 }
@@ -105,7 +138,11 @@ async function findLatestValidBackup() {
   try {
     const files = await fs.readdir(dir);
     const candidates = files
-      .filter((f) => f === 'kring-vlr-data.json.bak' || /^kring-vlr-data\.\d{8}-\d{4}\.bak$/.test(f))
+      .filter(
+        (f) =>
+          f === 'kring-vlr-data.json.bak' ||
+          /^kring-vlr-data\.\d{8}-\d{4}\.bak$/.test(f)
+      )
       .map((f) => path.join(dir, f));
 
     if (!candidates.length) return null;
@@ -128,16 +165,27 @@ async function findLatestValidBackup() {
         const content = await fs.readFile(item.filePath, 'utf8');
         if (content && content.trim().length > 0) {
           const parsed = JSON.parse(content);
-          if (parsed && typeof parsed === 'object' && Array.isArray(parsed.vods)) {
+          if (
+            parsed &&
+            typeof parsed === 'object' &&
+            Array.isArray(parsed.vods)
+          ) {
             return { filePath: item.filePath, parsed };
           }
         }
       } catch (readBackupErr) {
-        console.error('[findLatestValidBackup] Backup inválido ou ilegível:', item.filePath, readBackupErr);
+        console.error(
+          '[findLatestValidBackup] Backup inválido ou ilegível:',
+          item.filePath,
+          readBackupErr
+        );
       }
     }
   } catch (scanErr) {
-    console.error('[findLatestValidBackup] Erro ao listar diretório de backups:', scanErr);
+    console.error(
+      '[findLatestValidBackup] Erro ao listar diretório de backups:',
+      scanErr
+    );
   }
   return null;
 }
@@ -145,8 +193,13 @@ async function findLatestValidBackup() {
 async function loadCatalogSeed() {
   try {
     const parsed = JSON.parse(await fs.readFile(seedFile(), 'utf8'));
-    return { maps: Array.isArray(parsed.maps) ? parsed.maps : [], agents: Array.isArray(parsed.agents) ? parsed.agents : [] };
-  } catch { return { maps: [], agents: [] }; }
+    return {
+      maps: Array.isArray(parsed.maps) ? parsed.maps : [],
+      agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+    };
+  } catch {
+    return { maps: [], agents: [] };
+  }
 }
 
 function formatDataPayload(parsed, seed) {
@@ -184,7 +237,9 @@ async function loadData() {
   if (!fileExists) {
     const backupCandidate = await findLatestValidBackup();
     if (backupCandidate) {
-      console.warn(`[loadData] Arquivo principal ausente (ENOENT), mas backup válido encontrado: ${backupCandidate.filePath}`);
+      console.warn(
+        `[loadData] Arquivo principal ausente (ENOENT), mas backup válido encontrado: ${backupCandidate.filePath}`
+      );
       return {
         ok: true,
         recoveredFromBackup: true,
@@ -199,7 +254,11 @@ async function loadData() {
   // 2. Arquivo existe: tentar analisar o JSON
   let parsed = null;
   try {
-    if (fileContent && typeof fileContent === 'string' && fileContent.trim().length > 0) {
+    if (
+      fileContent &&
+      typeof fileContent === 'string' &&
+      fileContent.trim().length > 0
+    ) {
       parsed = JSON.parse(fileContent);
       if (typeof parsed !== 'object' || parsed === null) {
         throw new Error('Conteúdo não é um objeto JSON válido.');
@@ -208,7 +267,10 @@ async function loadData() {
       throw new Error('Arquivo de dados está vazio.');
     }
   } catch (parseErr) {
-    console.error('[loadData] Arquivo de dados principal ilegível/corrompido:', parseErr.message);
+    console.error(
+      '[loadData] Arquivo de dados principal ilegível/corrompido:',
+      parseErr.message
+    );
   }
 
   // Se o JSON principal for válido, agenda backup rotativo na inicialização e retorna com sucesso
@@ -222,13 +284,21 @@ async function loadData() {
   const latestBackup = await findLatestValidBackup();
 
   if (latestBackup) {
-    console.info(`[loadData] Dados recuperados com sucesso a partir de ${latestBackup.filePath}`);
+    console.info(
+      `[loadData] Dados recuperados com sucesso a partir de ${latestBackup.filePath}`
+    );
     const timestamp = Date.now();
-    const corruptedPreserved = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
+    const corruptedPreserved = path.join(
+      app.getPath('userData'),
+      `kring-vlr-data.corrupted-${timestamp}.json`
+    );
     try {
       await fs.copyFile(file, corruptedPreserved);
     } catch (copyErr) {
-      console.error('[loadData] Falha ao copiar arquivo corrompido para preservação:', copyErr);
+      console.error(
+        '[loadData] Falha ao copiar arquivo corrompido para preservação:',
+        copyErr
+      );
     }
 
     return {
@@ -242,12 +312,20 @@ async function loadData() {
 
   // 4. O backup também falhou ou não existe! Preservar o arquivo corrompido e NÃO sobrescrever com emptyData
   const timestamp = Date.now();
-  const corruptedFile = path.join(app.getPath('userData'), `kring-vlr-data.corrupted-${timestamp}.json`);
+  const corruptedFile = path.join(
+    app.getPath('userData'),
+    `kring-vlr-data.corrupted-${timestamp}.json`
+  );
   try {
     await fs.rename(file, corruptedFile);
-    console.warn(`[loadData] Arquivo corrompido preservado em: ${corruptedFile}`);
+    console.warn(
+      `[loadData] Arquivo corrompido preservado em: ${corruptedFile}`
+    );
   } catch (renameErr) {
-    console.error('[loadData] Não foi possível renomear arquivo corrompido:', renameErr);
+    console.error(
+      '[loadData] Não foi possível renomear arquivo corrompido:',
+      renameErr
+    );
   }
 
   return {
@@ -259,7 +337,12 @@ async function loadData() {
 
 ipcMain.handle('data:load', async () => loadData());
 ipcMain.handle('data:save', async (_event, data) => {
-  if (!data || typeof data !== 'object' || !Array.isArray(data.vods) || !Array.isArray(data.lineups)) {
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    !Array.isArray(data.vods) ||
+    !Array.isArray(data.lineups)
+  ) {
     throw new Error('Formato de dados inválido.');
   }
   const file = dataFile();
@@ -310,10 +393,13 @@ ipcMain.handle('video:select', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Selecionar gravação da Scrim / Treino',
     filters: [
-      { name: 'Vídeos de Valorant (*.mp4, *.mkv, *.webm, *.mov)', extensions: ['mp4', 'mkv', 'webm', 'mov', 'avi'] },
-      { name: 'Todos os arquivos', extensions: ['*'] }
+      {
+        name: 'Vídeos de Valorant (*.mp4, *.mkv, *.webm, *.mov)',
+        extensions: ['mp4', 'mkv', 'webm', 'mov', 'avi'],
+      },
+      { name: 'Todos os arquivos', extensions: ['*'] },
     ],
-    properties: ['openFile']
+    properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths.length) return null;
   return result.filePaths[0];
@@ -322,9 +408,27 @@ ipcMain.handle('video:select', async () => {
 function resolvePython() {
   const fsSync = require('node:fs');
   const candidates = [
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python312', 'python.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python310', 'python.exe'),
+    path.join(
+      process.env.LOCALAPPDATA || '',
+      'Programs',
+      'Python',
+      'Python312',
+      'python.exe'
+    ),
+    path.join(
+      process.env.LOCALAPPDATA || '',
+      'Programs',
+      'Python',
+      'Python311',
+      'python.exe'
+    ),
+    path.join(
+      process.env.LOCALAPPDATA || '',
+      'Programs',
+      'Python',
+      'Python310',
+      'python.exe'
+    ),
     'C:\\Python312\\python.exe',
     'C:\\Python311\\python.exe',
     'C:\\Python310\\python.exe',
@@ -369,8 +473,14 @@ function terminateProcessTree(proc) {
       } catch (err) {
         const msg = (err?.stderr ? err.stderr.toString() : err?.message) || '';
         // Não lançar exceção. Só registrar se não for processo já finalizado
-        if (!msg.toLowerCase().includes('not found') && !msg.toLowerCase().includes('não encontrado')) {
-          console.warn(`[terminateProcessTree] Aviso ao encerrar PID ${pid}:`, msg.trim());
+        if (
+          !msg.toLowerCase().includes('not found') &&
+          !msg.toLowerCase().includes('não encontrado')
+        ) {
+          console.warn(
+            `[terminateProcessTree] Aviso ao encerrar PID ${pid}:`,
+            msg.trim()
+          );
         }
       }
     } else {
@@ -389,194 +499,225 @@ function terminateProcessTree(proc) {
 }
 
 // Start native computer vision analyzer process
-ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, userNick, userAgent, timeoutMs }) => {
-  if (currentAnalyzerProcess) {
-    terminateProcessTree(currentAnalyzerProcess);
-    currentAnalyzerProcess = null;
-  }
-
-  // 1. Validar que videoPath é string, existe, é absoluto e não é caminho UNC
-  if (typeof videoPath !== 'string' || !videoPath.trim()) {
-    return { ok: false, error: 'Caminho do arquivo de vídeo inválido ou não fornecido.' };
-  }
-  const normVideoPath = path.normalize(videoPath.trim());
-  if (normVideoPath.startsWith('\\\\') || normVideoPath.startsWith('//')) {
-    return { ok: false, error: 'Caminhos de rede UNC não são permitidos por segurança.' };
-  }
-  if (!path.isAbsolute(normVideoPath)) {
-    return { ok: false, error: 'O caminho do vídeo deve ser um caminho absoluto.' };
-  }
-  const ext = path.extname(normVideoPath).toLowerCase();
-  if (!ALLOWED_VIDEO_EXTS.has(ext)) {
-    return { ok: false, error: `Extensão de vídeo não permitida (${ext || 'sem extensão'}). Formatos aceitos: .mp4, .mkv, .webm, .mov, .avi` };
-  }
-  try {
-    const stat = await fs.stat(normVideoPath);
-    if (!stat.isFile()) {
-      return { ok: false, error: 'O caminho informado não é um arquivo válido.' };
-    }
-  } catch {
-    return { ok: false, error: `Arquivo de vídeo não encontrado no caminho: ${normVideoPath}` };
-  }
-
-  return new Promise((resolve) => {
-    const fsSync = require('node:fs');
-    const analyzerDir = getAnalyzerDir();
-
-    // Check if a compiled standalone analyzer binary exists (so Python is not required)
-    const possibleBinaries = [
-      path.join(analyzerDir, 'analyzer.exe'),
-      path.join(analyzerDir, 'dist', 'analyzer.exe'),
-      path.join(process.resourcesPath || '', 'analyzer.exe'),
-      path.join(process.resourcesPath || '', 'analyzer', 'analyzer.exe'),
-      path.join(app.getAppPath(), 'analyzer', 'analyzer.exe'),
-    ];
-
-    let standaloneExe = null;
-    for (const bin of possibleBinaries) {
-      try {
-        if (fsSync.existsSync(bin)) {
-          standaloneExe = bin;
-          break;
-        }
-      } catch {
-        // Binário inexistente ou inacessível no caminho candidato; tenta o próximo
-      }
+ipcMain.handle(
+  'vod:start-analysis',
+  async (event, { videoPath, maxSeconds, userNick, userAgent, timeoutMs }) => {
+    if (currentAnalyzerProcess) {
+      terminateProcessTree(currentAnalyzerProcess);
+      currentAnalyzerProcess = null;
     }
 
-    let command;
-    let args;
-
-    if (standaloneExe) {
-      command = standaloneExe;
-      args = ['--video', normVideoPath];
-      if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
-      if (userNick) args.push('--user-nick', String(userNick));
-      if (userAgent) args.push('--user-agent', String(userAgent));
-    } else {
-      command = resolvePython();
-      const analyzerScript = path.join(analyzerDir, 'analyzer.py');
-      args = [analyzerScript, '--video', normVideoPath];
-      if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
-      if (userNick) args.push('--user-nick', String(userNick));
-      if (userAgent) args.push('--user-agent', String(userAgent));
+    // 1. Validar que videoPath é string, existe, é absoluto e não é caminho UNC
+    if (typeof videoPath !== 'string' || !videoPath.trim()) {
+      return {
+        ok: false,
+        error: 'Caminho do arquivo de vídeo inválido ou não fornecido.',
+      };
     }
-
-    let cwdDir = analyzerDir;
+    const normVideoPath = path.normalize(videoPath.trim());
+    if (normVideoPath.startsWith('\\\\') || normVideoPath.startsWith('//')) {
+      return {
+        ok: false,
+        error: 'Caminhos de rede UNC não são permitidos por segurança.',
+      };
+    }
+    if (!path.isAbsolute(normVideoPath)) {
+      return {
+        ok: false,
+        error: 'O caminho do vídeo deve ser um caminho absoluto.',
+      };
+    }
+    const ext = path.extname(normVideoPath).toLowerCase();
+    if (!ALLOWED_VIDEO_EXTS.has(ext)) {
+      return {
+        ok: false,
+        error: `Extensão de vídeo não permitida (${ext || 'sem extensão'}). Formatos aceitos: .mp4, .mkv, .webm, .mov, .avi`,
+      };
+    }
     try {
-      if (!fsSync.existsSync(cwdDir)) {
-        cwdDir = app.getPath('userData');
+      const stat = await fs.stat(normVideoPath);
+      if (!stat.isFile()) {
+        return {
+          ok: false,
+          error: 'O caminho informado não é um arquivo válido.',
+        };
       }
     } catch {
-      cwdDir = app.getPath('userData');
+      return {
+        ok: false,
+        error: `Arquivo de vídeo não encontrado no caminho: ${normVideoPath}`,
+      };
     }
 
-    const pythonProcess = spawn(command, args, {
-      cwd: cwdDir,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
-    });
+    return new Promise((resolve) => {
+      const fsSync = require('node:fs');
+      const analyzerDir = getAnalyzerDir();
 
-    currentAnalyzerProcess = pythonProcess;
+      // Check if a compiled standalone analyzer binary exists (so Python is not required)
+      const possibleBinaries = [
+        path.join(analyzerDir, 'analyzer.exe'),
+        path.join(analyzerDir, 'dist', 'analyzer.exe'),
+        path.join(process.resourcesPath || '', 'analyzer.exe'),
+        path.join(process.resourcesPath || '', 'analyzer', 'analyzer.exe'),
+        path.join(app.getAppPath(), 'analyzer', 'analyzer.exe'),
+      ];
 
-    // 2. Timeout configurável associado ao processo específico
-    const DEFAULT_TIMEOUT_MS = 45 * 60 * 1000;
-    const timeoutDuration = (Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0)
-      ? Number(timeoutMs)
-      : DEFAULT_TIMEOUT_MS;
-
-    pythonProcess._timeoutTimer = setTimeout(() => {
-      if (currentAnalyzerProcess === pythonProcess && !pythonProcess.killed) {
-        const timeoutMsg = `Tempo limite de análise excedido (${Math.round(timeoutDuration / 60000)} minutos). O processo foi encerrado para evitar travamento.`;
-        console.warn(`[vod:start-analysis] ${timeoutMsg}`);
-        mainWindow?.webContents.send('vod:error', timeoutMsg);
-        terminateProcessTree(pythonProcess);
-        currentAnalyzerProcess = null;
-        resolve({ ok: false, error: timeoutMsg });
-      }
-    }, timeoutDuration);
-
-    const cleanupAnalysis = () => {
-      if (pythonProcess._timeoutTimer) {
-        clearTimeout(pythonProcess._timeoutTimer);
-        pythonProcess._timeoutTimer = null;
-      }
-      if (currentAnalyzerProcess === pythonProcess) {
-        currentAnalyzerProcess = null;
-      }
-    };
-
-    let finalResult = null;
-    let reportedError = null;
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-
-    pythonProcess.stdout.on('data', (chunk) => {
-      stdoutBuffer += chunk.toString('utf8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop(); // preserve incomplete line chunk
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+      let standaloneExe = null;
+      for (const bin of possibleBinaries) {
         try {
-          const parsed = JSON.parse(trimmed);
-          if (parsed.type === 'progress') {
-            mainWindow?.webContents.send('vod:progress', parsed);
-          } else if (parsed.type === 'kill_event') {
-            mainWindow?.webContents.send('vod:kill-event', parsed.event);
-          } else if (parsed.type === 'error') {
-            reportedError = parsed.message;
-            mainWindow?.webContents.send('vod:error', parsed.message);
-          } else if (parsed.type === 'complete') {
-            finalResult = parsed.data;
+          if (fsSync.existsSync(bin)) {
+            standaloneExe = bin;
+            break;
           }
         } catch {
-          // Linha de stdout não é JSON (ex.: log do OpenCV/DirectML/RapidOCR); ignorar com segurança
+          // Binário inexistente ou inacessível no caminho candidato; tenta o próximo
         }
       }
-    });
 
-    // 3. Captura contínua de stderr do Python
-    pythonProcess.stderr.on('data', (chunk) => {
-      const text = chunk.toString('utf8');
-      stderrBuffer += text;
-      console.warn('[Analyzer STDERR]', text);
-    });
+      let command;
+      let args;
 
-    pythonProcess.on('close', (code) => {
-      cleanupAnalysis();
-      if (reportedError) {
-        resolve({ ok: false, error: reportedError });
-      } else if (code === 0 && finalResult) {
-        resolve({ ok: true, data: finalResult });
-      } else if (code === 0) {
-        try {
-          const parsed = JSON.parse(stdoutBuffer.trim());
-          if (parsed.type === 'complete') resolve({ ok: true, data: parsed.data });
-          else if (parsed.type === 'error') resolve({ ok: false, error: parsed.message });
-          else resolve({ ok: true, data: parsed });
-        } catch {
-          resolve({ ok: false, error: 'A análise foi concluída, mas o JSON final não pôde ser lido.' });
-        }
+      if (standaloneExe) {
+        command = standaloneExe;
+        args = ['--video', normVideoPath];
+        if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
+        if (userNick) args.push('--user-nick', String(userNick));
+        if (userAgent) args.push('--user-agent', String(userAgent));
       } else {
-        const detail = stderrBuffer.trim() ? `: ${stderrBuffer.trim().slice(-300)}` : '';
-        const errMsg = `Processo do analisador encerrou com erro (código ${code})${detail}`;
-        mainWindow?.webContents.send('vod:error', errMsg);
-        resolve({ ok: false, error: errMsg });
+        command = resolvePython();
+        const analyzerScript = path.join(analyzerDir, 'analyzer.py');
+        args = [analyzerScript, '--video', normVideoPath];
+        if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
+        if (userNick) args.push('--user-nick', String(userNick));
+        if (userAgent) args.push('--user-agent', String(userAgent));
       }
-    });
 
-    pythonProcess.on('error', (err) => {
-      cleanupAnalysis();
-      let msg = err.message;
-      if (err.code === 'ENOENT') {
-        msg = 'Python não foi encontrado no sistema. Para analisar vídeos sem Python instalado, compile o executável analyzer.exe ou instale o Python marcando "Add Python to PATH".';
+      let cwdDir = analyzerDir;
+      try {
+        if (!fsSync.existsSync(cwdDir)) {
+          cwdDir = app.getPath('userData');
+        }
+      } catch {
+        cwdDir = app.getPath('userData');
       }
-      mainWindow?.webContents.send('vod:error', msg);
-      resolve({ ok: false, error: msg });
+
+      const pythonProcess = spawn(command, args, {
+        cwd: cwdDir,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      });
+
+      currentAnalyzerProcess = pythonProcess;
+
+      // 2. Timeout configurável associado ao processo específico
+      const DEFAULT_TIMEOUT_MS = 45 * 60 * 1000;
+      const timeoutDuration =
+        Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+          ? Number(timeoutMs)
+          : DEFAULT_TIMEOUT_MS;
+
+      pythonProcess._timeoutTimer = setTimeout(() => {
+        if (currentAnalyzerProcess === pythonProcess && !pythonProcess.killed) {
+          const timeoutMsg = `Tempo limite de análise excedido (${Math.round(timeoutDuration / 60000)} minutos). O processo foi encerrado para evitar travamento.`;
+          console.warn(`[vod:start-analysis] ${timeoutMsg}`);
+          mainWindow?.webContents.send('vod:error', timeoutMsg);
+          terminateProcessTree(pythonProcess);
+          currentAnalyzerProcess = null;
+          resolve({ ok: false, error: timeoutMsg });
+        }
+      }, timeoutDuration);
+
+      const cleanupAnalysis = () => {
+        if (pythonProcess._timeoutTimer) {
+          clearTimeout(pythonProcess._timeoutTimer);
+          pythonProcess._timeoutTimer = null;
+        }
+        if (currentAnalyzerProcess === pythonProcess) {
+          currentAnalyzerProcess = null;
+        }
+      };
+
+      let finalResult = null;
+      let reportedError = null;
+      let stdoutBuffer = '';
+      let stderrBuffer = '';
+
+      pythonProcess.stdout.on('data', (chunk) => {
+        stdoutBuffer += chunk.toString('utf8');
+        const lines = stdoutBuffer.split('\n');
+        stdoutBuffer = lines.pop(); // preserve incomplete line chunk
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed.type === 'progress') {
+              mainWindow?.webContents.send('vod:progress', parsed);
+            } else if (parsed.type === 'kill_event') {
+              mainWindow?.webContents.send('vod:kill-event', parsed.event);
+            } else if (parsed.type === 'error') {
+              reportedError = parsed.message;
+              mainWindow?.webContents.send('vod:error', parsed.message);
+            } else if (parsed.type === 'complete') {
+              finalResult = parsed.data;
+            }
+          } catch {
+            // Linha de stdout não é JSON (ex.: log do OpenCV/DirectML/RapidOCR); ignorar com segurança
+          }
+        }
+      });
+
+      // 3. Captura contínua de stderr do Python
+      pythonProcess.stderr.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        stderrBuffer += text;
+        console.warn('[Analyzer STDERR]', text);
+      });
+
+      pythonProcess.on('close', (code) => {
+        cleanupAnalysis();
+        if (reportedError) {
+          resolve({ ok: false, error: reportedError });
+        } else if (code === 0 && finalResult) {
+          resolve({ ok: true, data: finalResult });
+        } else if (code === 0) {
+          try {
+            const parsed = JSON.parse(stdoutBuffer.trim());
+            if (parsed.type === 'complete')
+              resolve({ ok: true, data: parsed.data });
+            else if (parsed.type === 'error')
+              resolve({ ok: false, error: parsed.message });
+            else resolve({ ok: true, data: parsed });
+          } catch {
+            resolve({
+              ok: false,
+              error:
+                'A análise foi concluída, mas o JSON final não pôde ser lido.',
+            });
+          }
+        } else {
+          const detail = stderrBuffer.trim()
+            ? `: ${stderrBuffer.trim().slice(-300)}`
+            : '';
+          const errMsg = `Processo do analisador encerrou com erro (código ${code})${detail}`;
+          mainWindow?.webContents.send('vod:error', errMsg);
+          resolve({ ok: false, error: errMsg });
+        }
+      });
+
+      pythonProcess.on('error', (err) => {
+        cleanupAnalysis();
+        let msg = err.message;
+        if (err.code === 'ENOENT') {
+          msg =
+            'Python não foi encontrado no sistema. Para analisar vídeos sem Python instalado, compile o executável analyzer.exe ou instale o Python marcando "Add Python to PATH".';
+        }
+        mainWindow?.webContents.send('vod:error', msg);
+        resolve({ ok: false, error: msg });
+      });
     });
-  });
-});
+  }
+);
 
 ipcMain.handle('vod:cancel-analysis', async () => {
   if (currentAnalyzerProcess) {
@@ -629,30 +770,50 @@ app.whenReady().then(() => {
       const url = new URL(request.url);
       let targetPath = url.searchParams.get('path');
       if (!targetPath) {
-        let raw = decodeURIComponent(request.url.replace(/^local-video:\/\//, ''));
+        let raw = decodeURIComponent(
+          request.url.replace(/^local-video:\/\//, '')
+        );
         if (process.platform === 'win32' && /^[a-zA-Z]\//.test(raw)) {
           raw = raw[0].toUpperCase() + ':/' + raw.slice(2);
-        } else if (process.platform === 'win32' && raw.startsWith('/') && raw.length > 2 && raw[2] === ':') {
+        } else if (
+          process.platform === 'win32' &&
+          raw.startsWith('/') &&
+          raw.length > 2 &&
+          raw[2] === ':'
+        ) {
           raw = raw.slice(1);
         }
         targetPath = raw;
       }
 
       // 1. Rejeitar caminhos não absolutos e caminhos de rede UNC
-      if (!targetPath || !path.isAbsolute(targetPath) || targetPath.startsWith('\\\\') || targetPath.startsWith('//')) {
-        return new Response('Caminho de vídeo inválido, não absoluto ou caminho UNC de rede não permitido.', { status: 400 });
+      if (
+        !targetPath ||
+        !path.isAbsolute(targetPath) ||
+        targetPath.startsWith('\\\\') ||
+        targetPath.startsWith('//')
+      ) {
+        return new Response(
+          'Caminho de vídeo inválido, não absoluto ou caminho UNC de rede não permitido.',
+          { status: 400 }
+        );
       }
       targetPath = path.normalize(targetPath);
 
       // 2. Rejeitar extensões não permitidas
       const ext = path.extname(targetPath).toLowerCase();
       if (!ALLOWED_VIDEO_EXTS.has(ext)) {
-        return new Response('Extensão de arquivo não permitida para reprodução.', { status: 403 });
+        return new Response(
+          'Extensão de arquivo não permitida para reprodução.',
+          { status: 403 }
+        );
       }
 
       const stat = await fs.stat(targetPath);
       if (!stat.isFile()) {
-        return new Response('O caminho informado não é um arquivo.', { status: 400 });
+        return new Response('O caminho informado não é um arquivo.', {
+          status: 400,
+        });
       }
 
       const fileSize = stat.size;
@@ -692,8 +853,11 @@ app.whenReady().then(() => {
           }
 
           end = Math.min(end, fileSize - 1);
-          const chunkSize = (end - start) + 1;
-          const nodeStream = nodeFs.createReadStream(targetPath, { start, end });
+          const chunkSize = end - start + 1;
+          const nodeStream = nodeFs.createReadStream(targetPath, {
+            start,
+            end,
+          });
           const webStream = Readable.toWeb(nodeStream);
 
           return new Response(webStream, {
@@ -720,7 +884,9 @@ app.whenReady().then(() => {
       });
     } catch (err) {
       console.error('[local-video] Erro ao servir vídeo local:', err);
-      return new Response('Vídeo não encontrado: ' + (err?.message || err), { status: 404 });
+      return new Response('Vídeo não encontrado: ' + (err?.message || err), {
+        status: 404,
+      });
     }
   });
 
@@ -731,14 +897,17 @@ app.whenReady().then(() => {
     autoUpdater.autoInstallOnAppQuit = true;
 
     autoUpdater.on('checking-for-update', () => {
-      mainWindow?.webContents.send('updater:status', { status: 'checking', message: 'Verificando atualizações...' });
+      mainWindow?.webContents.send('updater:status', {
+        status: 'checking',
+        message: 'Verificando atualizações...',
+      });
     });
 
     autoUpdater.on('update-available', (info) => {
       mainWindow?.webContents.send('updater:status', {
         status: 'available',
         version: info?.version,
-        message: `Nova versão v${info?.version || ''} encontrada! Baixando...`
+        message: `Nova versão v${info?.version || ''} encontrada! Baixando...`,
       });
     });
 
@@ -746,7 +915,7 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('updater:status', {
         status: 'downloading',
         percent: Math.round(progressObj.percent),
-        message: `Baixando atualização: ${Math.round(progressObj.percent)}%`
+        message: `Baixando atualização: ${Math.round(progressObj.percent)}%`,
       });
     });
 
@@ -754,7 +923,7 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('updater:status', {
         status: 'downloaded',
         version: info?.version,
-        message: `Versão v${info?.version || ''} pronta para instalar!`
+        message: `Versão v${info?.version || ''} pronta para instalar!`,
       });
     });
 
@@ -763,7 +932,10 @@ app.whenReady().then(() => {
       if (msg.includes('latest.yml') || msg.includes('404')) {
         return 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.';
       }
-      if (msg.includes('net::ERR_INTERNET_DISCONNECTED') || msg.includes('ENOTFOUND')) {
+      if (
+        msg.includes('net::ERR_INTERNET_DISCONNECTED') ||
+        msg.includes('ENOTFOUND')
+      ) {
         return 'Sem conexão com a internet para verificar atualizações.';
       }
       return `Erro ao verificar atualizações: ${msg}`;
@@ -772,14 +944,17 @@ app.whenReady().then(() => {
     autoUpdater.on('error', (err) => {
       mainWindow?.webContents.send('updater:status', {
         status: 'error',
-        message: formatUpdaterError(err)
+        message: formatUpdaterError(err),
       });
     });
 
     // Check on startup after 2 seconds
     setTimeout(() => {
       autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-        console.warn('[AutoUpdater] Erro ao verificar atualizações:', err?.message || err);
+        console.warn(
+          '[AutoUpdater] Erro ao verificar atualizações:',
+          err?.message || err
+        );
       });
     }, 2000);
   }
@@ -791,15 +966,20 @@ app.whenReady().then(() => {
         return { ok: true, updateInfo: res?.updateInfo };
       } catch (err) {
         const msg = err?.message || String(err);
-        const friendly = (msg.includes('latest.yml') || msg.includes('404'))
-          ? 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.'
-          : (msg.includes('net::ERR_INTERNET_DISCONNECTED') || msg.includes('ENOTFOUND'))
-          ? 'Sem conexão com a internet.'
-          : `Erro: ${msg}`;
+        const friendly =
+          msg.includes('latest.yml') || msg.includes('404')
+            ? 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.'
+            : msg.includes('net::ERR_INTERNET_DISCONNECTED') ||
+                msg.includes('ENOTFOUND')
+              ? 'Sem conexão com a internet.'
+              : `Erro: ${msg}`;
         return { ok: false, error: friendly };
       }
     }
-    return { ok: false, message: 'Modo de desenvolvimento (app não empacotado)' };
+    return {
+      ok: false,
+      message: 'Modo de desenvolvimento (app não empacotado)',
+    };
   });
 
   ipcMain.handle('updater:quit-and-install', () => {
@@ -828,4 +1008,3 @@ app.on('will-quit', () => {
     currentAnalyzerProcess = null;
   }
 });
-

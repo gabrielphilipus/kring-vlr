@@ -5,7 +5,8 @@ contextBridge.exposeInMainWorld('kringAPI', {
   saveData: (data) => ipcRenderer.invoke('data:save', data),
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   selectVideoFile: () => ipcRenderer.invoke('video:select'),
-  startVodAnalysis: (videoPath, options) => ipcRenderer.invoke('vod:start-analysis', { videoPath, ...options }),
+  startVodAnalysis: (videoPath, options) =>
+    ipcRenderer.invoke('vod:start-analysis', { videoPath, ...options }),
   cancelVodAnalysis: () => ipcRenderer.invoke('vod:cancel-analysis'),
   onVodProgress: (callback) => {
     const handler = (_event, data) => callback(data);
