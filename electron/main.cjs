@@ -206,6 +206,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  app.setAppUserModelId('com.kring.vlrstats');
+
   protocol.handle('local-video', (request) => {
     let filePath = decodeURIComponent(request.url.replace(/^local-video:\/\//, ''));
     // On Windows, if filePath starts with a slash before drive letter (e.g. /C:/...), strip leading slash
@@ -218,10 +220,67 @@ app.whenReady().then(() => {
   createWindow();
 
   if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-      console.warn('[AutoUpdater] Erro ao verificar atualizações:', err?.message || err);
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('checking-for-update', () => {
+      mainWindow?.webContents.send('updater:status', { status: 'checking', message: 'Verificando atualizações...' });
     });
+
+    autoUpdater.on('update-available', (info) => {
+      mainWindow?.webContents.send('updater:status', {
+        status: 'available',
+        version: info?.version,
+        message: `Nova versão v${info?.version || ''} encontrada! Baixando...`
+      });
+    });
+
+    autoUpdater.on('download-progress', (progressObj) => {
+      mainWindow?.webContents.send('updater:status', {
+        status: 'downloading',
+        percent: Math.round(progressObj.percent),
+        message: `Baixando atualização: ${Math.round(progressObj.percent)}%`
+      });
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      mainWindow?.webContents.send('updater:status', {
+        status: 'downloaded',
+        version: info?.version,
+        message: `Versão v${info?.version || ''} pronta para instalar!`
+      });
+    });
+
+    autoUpdater.on('error', (err) => {
+      mainWindow?.webContents.send('updater:status', {
+        status: 'error',
+        message: `Erro ao buscar atualização: ${err?.message || err}`
+      });
+    });
+
+    // Check on startup after 2 seconds
+    setTimeout(() => {
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+        console.warn('[AutoUpdater] Erro ao verificar atualizações:', err?.message || err);
+      });
+    }, 2000);
   }
+
+  ipcMain.handle('updater:check', async () => {
+    if (app.isPackaged) {
+      try {
+        const res = await autoUpdater.checkForUpdates();
+        return { ok: true, updateInfo: res?.updateInfo };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    }
+    return { ok: false, message: 'Modo de desenvolvimento (app não empacotado)' };
+  });
+
+  ipcMain.handle('updater:quit-and-install', () => {
+    autoUpdater.quitAndInstall();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -4,7 +4,7 @@ import {
   Check, ChevronDown, CircleHelp, ClipboardPaste, Crosshair, ExternalLink, FileVideo2,
   Filter, FolderOpen, Gamepad2, LayoutDashboard, ListFilter, Map as MapIcon,
   Pencil, Plus, Search, ShieldCheck, Swords, Target, Trash2, Trophy,
-  Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles, Sun, Moon,
+  Upload, Video, X, Zap, RotateCcw, ArrowRight, Ban, Play, Clock, Sparkles, Sun, Moon, RefreshCw,
 } from 'lucide-react';
 
 
@@ -112,12 +112,38 @@ function App() {
   const [imageBusy, setImageBusy] = useState(false);
   const [vodAnalysis, setVodAnalysis] = useState({ busy: false, progress: 0, message: '' });
   const [theme, setTheme] = useState(() => localStorage.getItem('kring-theme') || 'dark');
+  const [updateInfo, setUpdateInfo] = useState(null);
   const imageInputRef = useRef(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('kring-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (window.kringAPI?.onUpdaterStatus) {
+      const unsub = window.kringAPI.onUpdaterStatus((statusData) => {
+        setUpdateInfo(statusData);
+      });
+      return unsub;
+    }
+  }, []);
+
+  const handleManualCheckUpdates = async () => {
+    if (!window.kringAPI?.checkForUpdates) {
+      setToast('Verificação indisponível no navegador web.');
+      return;
+    }
+    setToast('Buscando atualizações no GitHub...');
+    try {
+      const res = await window.kringAPI.checkForUpdates();
+      if (!res?.ok) {
+        setToast(res?.error || res?.message || 'Nenhuma atualização encontrada.');
+      }
+    } catch {
+      setToast('Erro ao consultar atualizações.');
+    }
+  };
   const vodFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const defaultsImportRef = useRef(null);
@@ -591,7 +617,19 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="local-card"><div className="local-icon"><ShieldCheck size={17} /></div><div><strong>Seus dados, no seu PC</strong><span>Salvamento local automático</span></div></div>
-          <div className="sidebar-footer"><span className="status-dot" /> Kring VLR <span className="version">v1.0.5</span></div>
+          <div className="sidebar-footer">
+            <span className="status-dot" />
+            <span>Kring VLR</span>
+            <span className="version">v1.0.7</span>
+            <button
+              type="button"
+              className="updater-check-btn"
+              onClick={handleManualCheckUpdates}
+              title="Buscar atualizações no GitHub"
+            >
+              <RefreshCw size={11} />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -613,6 +651,37 @@ function App() {
             {view !== 'veto' && view !== 'stats' && view !== 'tactics' && <button className="button button-primary button-small" onClick={() => openCreate(view === 'lineups' ? 'lineup' : view === 'training' ? 'training' : view === 'gameplans' ? 'gameplan' : view === 'catalogs' ? 'catalogMap' : 'vod')}><Plus size={16} /> {view === 'lineups' ? 'Nova lineup' : view === 'training' ? 'Adicionar treino' : view === 'gameplans' ? 'Novo Gameplan' : view === 'catalogs' ? 'Adicionar mapa' : 'Adicionar VOD'}</button>}
           </div>
         </header>
+
+        {updateInfo && (updateInfo.status === 'downloading' || updateInfo.status === 'downloaded' || updateInfo.status === 'available') && (
+          <div className={`updater-banner ${updateInfo.status}`}>
+            <div className="updater-content">
+              {updateInfo.status === 'downloading' ? <RefreshCw size={15} className="spin" /> : <Sparkles size={15} />}
+              <span className="updater-msg">{updateInfo.message}</span>
+              {updateInfo.status === 'downloading' && (
+                <div className="updater-progress-bar">
+                  <div className="updater-progress-fill" style={{ width: `${updateInfo.percent || 0}%` }} />
+                </div>
+              )}
+            </div>
+            {updateInfo.status === 'downloaded' && (
+              <button
+                type="button"
+                className="button button-primary button-small"
+                onClick={() => window.kringAPI?.quitAndInstallUpdate()}
+              >
+                Reiniciar e aplicar
+              </button>
+            )}
+            <button
+              type="button"
+              className="updater-close-btn"
+              onClick={() => setUpdateInfo(null)}
+              title="Fechar aviso"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <div className="page-content">
           {view === 'dashboard' && <Dashboard

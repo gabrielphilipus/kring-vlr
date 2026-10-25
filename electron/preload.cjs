@@ -21,4 +21,11 @@ contextBridge.exposeInMainWorld('kringAPI', {
     if (!filePath) return '';
     return `local-video://${filePath.replace(/\\/g, '/')}`;
   },
+  onUpdaterStatus: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('updater:status', handler);
+    return () => ipcRenderer.removeListener('updater:status', handler);
+  },
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  quitAndInstallUpdate: () => ipcRenderer.invoke('updater:quit-and-install'),
 });
