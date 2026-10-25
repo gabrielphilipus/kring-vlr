@@ -228,20 +228,33 @@ graph LR
 
 ---
 
-## 6. Detalhes Cruciais de Implementação e Correções Recentes
+## 6. Detalhes Cruciais de Implementação e Correções Recentes (v1.0.12 / v1.0.13)
 
 ### A. Protocolo de Vídeo Local (`local-video://`) e Streaming HTTP 206
-* **Problema Resolvido:** O Chromium tratava `local-video://C:/...` encarando `C:` como host e engolindo os dois pontos (`:`), tornando o caminho inválido no Windows. Além disso, cliques rápidos em múltiplos lances geravam sobrecarga de requisições de demuxer.
+* **Problema Resolvido:** O Chromium tratava caminhos como `local-video://C:/...` interpretando `C:` como host e descartando os dois pontos (`:`), tornando o caminho inválido no Windows. Além disso, o uso ingênuo de `net.fetch()` tentava baixar o arquivo inteiro (600 MB) a cada clique de seek, gerando sobrecarga de I/O em disco e travamentos.
 * **Implementação Vigente:**
   * No [electron/preload.cjs](file:///c:/AnaliseValorant/electron/preload.cjs):
     `toLocalVideoUrl: (filePath) => 'local-video://media?path=' + encodeURIComponent(filePath)`
   * No [electron/main.cjs](file:///c:/AnaliseValorant/electron/main.cjs):
-    Utiliza streams nativas do Node (`nodeFs.createReadStream`) com suporte completo ao cabeçalho `Range:` e resposta `206 Partial Content` encapsulada via `Readable.toWeb`.
-  * No [src/App.jsx](file:///c:/AnaliseValorant/src/App.jsx):
-    Salto temporal configurável com opção de **Momento Exato (0s)**, `-3s setup` ou `-5s`, protegido por debounce de 30ms e verificação `video.paused` para evitar deadlocks de pipeline do Chromium em cliques sucessivos.
-  * **Resultado:** Vídeo busca instantaneamente o segundo exato com zero travamentos mesmo ao clicar rapidamente em múltiplos eventos.
+    Utiliza streams de arquivo nativas do Node (`nodeFs.createReadStream`) com suporte completo ao cabeçalho `Range:` do Chromium, fatiando apenas os bytes solicitados (`HTTP 206 Partial Content`) e encapsulando em um Web `Response` via `Readable.toWeb(nodeStream)`.
+    Mapeia dinamicamente os tipos MIME (`.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`).
+  * **Resultado:** O Chromium recebe chunks parciais instantaneamente com aceleração de hardware ativa. Ao saltar para outro tempo, a stream anterior é abortada e fechada de imediato pelo Node, com zero vazamento de memória.
 
-### B. Otimização do Motor de Análise (`analyzer/analyzer.py`)
+### B. Salto Temporal Preciso e Proteção Anti-Travamento no Player
+* **Problema Resolvido:** 
+  1. Havia uma subtração arbitrária de 4 segundos no clique dos abates (`seconds - 4`), fazendo com que um abate marcado em `01:51` pulasse para `01:47`, confundindo o usuário.
+  2. Cliques rápidos e repetidos em diferentes cards disparavam múltiplas chamadas concorrentes a `video.play()` e `video.currentTime`, sobrecarregando o demuxer do Chromium e gerando `AbortError`, travando o player completamente.
+* **Implementação Vigente em [src/App.jsx](file:///c:/AnaliseValorant/src/App.jsx):**
+  * **Salto no Tempo Exato:** Por padrão (`jumpOffset = 0`), clicar no card de `01:51` posiciona o vídeo exatamente em `01:51`.
+  * **Seletor de Pré-Lance:** Adicionado seletor visual na barra de controles:
+    * `[Exato (0s)]` (Padrão)
+    * `[-3s setup]` (Volta 3 segundos antes do lance para ver preparação de mira)
+    * `[-5s]` (Volta 5 segundos)
+  * **Proteção Debounce Anti-Travamento:** O clique no card atualiza o visual (`activeKill`) instantaneamente (0ms de latência), enquanto o comando de busca no elemento `<video>` passa por um debounce seguro de 30ms.
+  * **Uso de `fastSeek` e Proteção de Promises:** Utiliza `video.fastSeek(targetSec)` acelerado por keyframes e checa `if (video.paused)` antes de invocar `play()`, eliminando exceções de concorrência.
+  * **Parser de Tempo Universal:** `parseTimeToSeconds` agora suporta tanto formatos `mm:ss` quanto `hh:mm:ss`.
+
+### C. Otimização do Motor de Análise (`analyzer/analyzer.py`)
 * **Aceleração do Killfeed:** 
   * Caching por diferença de pixels (`cv2.absdiff(kf_gray, last_kf_gray) > 3.5`).
   * Threshold do banner de kill elevado de 250 para 750 pixels, eliminando OCR em texturas claras de mapa.
@@ -249,15 +262,15 @@ graph LR
 * **Prevenção de Ruído:**
   * Nicknames puramente numéricos (`12`, `100`, `150`) ou termos de HUD (`FENSE`, `Aliado`, `Inimigo`, `25/25`) são descartados pelo `resolve_player` exigindo caracteres alfabéticos válidos.
 
-### C. Redimensionamento e Placar Responsivo no Review
+### D. Redimensionamento da Janela e Placar Responsivo no Review
 * **Botão Maximizar / Restaurar:** Altera a classe da modal para `.review-modal-card.maximized` (ocupando `99vw × 97vh`).
 * **Grid Dinâmico:** Ao entrar na aba "Placar do Treino", a proporção do modal muda para `.scoreboard-active` (`1fr 1.45fr`), permitindo que todas as 9 colunas fiquem visíveis sem cortes.
 * **Clustering Fuzzy (Levenshtein) no Frontend:** Agrupa nomes com pequenas variações de OCR (ex: `low277` ➔ `lowz77`, `lokky` ➔ `tokky`), destacando o MVP com troféu dourado e fornecendo filtros rápidos (`Todos`, `Aliados`, `Inimigos`).
 
-### D. Auto-Updater 100% Silencioso
-* Configurado em [package.json](file:///c:/AnaliseValorant/package.json): `"oneClick": true`, `"perMachine": false`, `"allowElevation": false`.
-* No [electron/main.cjs](file:///c:/AnaliseValorant/electron/main.cjs): `autoUpdater.quitAndInstall(true, true)`.
-* Atualiza a aplicação sem reabrir instaladores interativos do NSIS.
+### E. Auto-Updater Silencioso e Estabilidade de CI/CD
+* **Instalação Silenciosa:** Configurado em [package.json](file:///c:/AnaliseValorant/package.json): `"oneClick": true`, `"perMachine": false`, `"allowElevation": false` e em [electron/main.cjs](file:///c:/AnaliseValorant/electron/main.cjs): `autoUpdater.quitAndInstall(true, true)`.
+* **Correção de Concorrência no GitHub Actions:** Removido gatilho de `push: branches: [main]` em [.github/workflows/release.yml](file:///c:/AnaliseValorant/.github/workflows/release.yml), mantendo execução exclusiva por tags `v*`. Isso eliminou execuções concorrentes duplicadas que causavam erros 404 momentâneos no `latest.yml`.
+* **Mensagens de Erro Humanizadas:** Caso o usuário consulte atualizações enquanto os servidores do GitHub ainda estiverem compilando o instalador, o sistema exibe mensagem amigável em português explicando a situação.
 
 ---
 
