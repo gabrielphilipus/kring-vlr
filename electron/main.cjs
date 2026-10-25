@@ -92,6 +92,37 @@ ipcMain.handle('video:select', async () => {
   return result.filePaths[0];
 });
 
+function resolvePython() {
+  const fsSync = require('node:fs');
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python312', 'python.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python310', 'python.exe'),
+    'C:\\Python312\\python.exe',
+    'C:\\Python311\\python.exe',
+    'C:\\Python310\\python.exe',
+    path.join(process.env.PROGRAMFILES || '', 'Python312', 'python.exe'),
+    path.join(process.env.PROGRAMFILES || '', 'Python311', 'python.exe'),
+  ];
+  for (const c of candidates) {
+    try {
+      if (fsSync.existsSync(c)) return c;
+    } catch {}
+  }
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+function getAnalyzerDir() {
+  const fsSync = require('node:fs');
+  if (app.isPackaged) {
+    const resPath = path.join(process.resourcesPath, 'analyzer');
+    if (fsSync.existsSync(resPath)) return resPath;
+  }
+  const appPath = path.join(app.getAppPath(), 'analyzer');
+  if (fsSync.existsSync(appPath)) return appPath;
+  return process.resourcesPath || app.getPath('userData');
+}
+
 // Start native computer vision analyzer process
 ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, userNick, userAgent }) => {
   if (currentAnalyzerProcess) {
@@ -100,16 +131,19 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
   }
 
   return new Promise((resolve, reject) => {
+    const fsSync = require('node:fs');
+    const analyzerDir = getAnalyzerDir();
+
     // Check if a compiled standalone analyzer binary exists (so Python is not required)
     const possibleBinaries = [
-      path.join(app.getAppPath(), 'analyzer', 'dist', 'analyzer.exe'),
-      path.join(app.getAppPath(), 'analyzer', 'analyzer.exe'),
-      path.join(process.resourcesPath || '', 'analyzer', 'analyzer.exe'),
+      path.join(analyzerDir, 'analyzer.exe'),
+      path.join(analyzerDir, 'dist', 'analyzer.exe'),
       path.join(process.resourcesPath || '', 'analyzer.exe'),
+      path.join(process.resourcesPath || '', 'analyzer', 'analyzer.exe'),
+      path.join(app.getAppPath(), 'analyzer', 'analyzer.exe'),
     ];
 
     let standaloneExe = null;
-    const fsSync = require('node:fs');
     for (const bin of possibleBinaries) {
       try {
         if (fsSync.existsSync(bin)) {
@@ -129,16 +163,25 @@ ipcMain.handle('vod:start-analysis', async (event, { videoPath, maxSeconds, user
       if (userNick) args.push('--user-nick', String(userNick));
       if (userAgent) args.push('--user-agent', String(userAgent));
     } else {
-      command = process.platform === 'win32' ? 'python' : 'python3';
-      const analyzerScript = path.join(app.getAppPath(), 'analyzer', 'analyzer.py');
+      command = resolvePython();
+      const analyzerScript = path.join(analyzerDir, 'analyzer.py');
       args = [analyzerScript, '--video', videoPath];
       if (maxSeconds) args.push('--max-seconds', String(maxSeconds));
       if (userNick) args.push('--user-nick', String(userNick));
       if (userAgent) args.push('--user-agent', String(userAgent));
     }
 
+    let cwdDir = analyzerDir;
+    try {
+      if (!fsSync.existsSync(cwdDir)) {
+        cwdDir = app.getPath('userData');
+      }
+    } catch {
+      cwdDir = app.getPath('userData');
+    }
+
     const pythonProcess = spawn(command, args, {
-      cwd: app.getAppPath(),
+      cwd: cwdDir,
       env: { ...process.env, PYTHONUNBUFFERED: '1' }
     });
 

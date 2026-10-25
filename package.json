@@ -1,6 +1,6 @@
 {
   "name": "kring-vlr",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Painel pessoal de VODs, lineups e estatísticas para Valorant",
   "main": "electron/main.cjs",
   "author": "Kring",
@@ -41,6 +41,18 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "analyzer",
+        "to": "analyzer",
+        "filter": [
+          "**/*",
+          "!dist",
+          "!build",
+          "!__pycache__"
+        ]
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",

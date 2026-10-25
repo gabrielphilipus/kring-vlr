@@ -620,7 +620,7 @@ function App() {
           <div className="sidebar-footer">
             <span className="status-dot" />
             <span>Kring VLR</span>
-            <span className="version">v1.0.8</span>
+            <span className="version">v1.0.9</span>
             <button
               type="button"
               className="updater-check-btn"
