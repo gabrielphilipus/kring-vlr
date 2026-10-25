@@ -357,7 +357,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('updater:quit-and-install', () => {
-    autoUpdater.quitAndInstall();
+    autoUpdater.quitAndInstall(true, true);
   });
 
   app.on('activate', () => {

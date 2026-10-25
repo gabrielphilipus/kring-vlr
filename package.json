@@ -1,6 +1,6 @@
 {
   "name": "kring-vlr",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Painel pessoal de VODs, lineups e estatísticas para Valorant",
   "main": "electron/main.cjs",
   "author": "Kring",
@@ -67,8 +67,9 @@
       ]
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Kring VLR"
