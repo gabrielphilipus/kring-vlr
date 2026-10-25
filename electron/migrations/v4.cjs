@@ -97,23 +97,33 @@ function migrateV3ToV4(rawData, options = {}) {
     countsAfter: {},
   };
 
+  const unlinkedMaps = new Set();
+  const unlinkedAgents = new Set();
+
   // Helper para resolver mapId
   function resolveMapId(item) {
     if (item.mapId) return item.mapId;
-    if (!item.map || !mapsCatalog.length) return null;
+    if (!item.map || !mapsCatalog.length) {
+      if (item.map) unlinkedMaps.add(item.map);
+      return null;
+    }
     const targetNorm = normalizeName(item.map);
     const found = mapsCatalog.find((m) => normalizeName(m.name) === targetNorm);
     if (found && found.id) {
       stats.linksPopulated += 1;
       return found.id;
     }
+    unlinkedMaps.add(item.map);
     return null;
   }
 
   // Helper para resolver agentId
   function resolveAgentId(item) {
     if (item.agentId) return item.agentId;
-    if (!item.agent || !agentsCatalog.length) return null;
+    if (!item.agent || !agentsCatalog.length) {
+      if (item.agent) unlinkedAgents.add(item.agent);
+      return null;
+    }
     const targetNorm = normalizeName(item.agent);
     const found = agentsCatalog.find(
       (a) => normalizeName(a.name) === targetNorm
@@ -122,6 +132,7 @@ function migrateV3ToV4(rawData, options = {}) {
       stats.linksPopulated += 1;
       return found.id;
     }
+    unlinkedAgents.add(item.agent);
     return null;
   }
 
@@ -304,6 +315,9 @@ function migrateV3ToV4(rawData, options = {}) {
     maps: migrated.maps.length,
     agents: migrated.agents.length,
   };
+
+  stats.unlinkedMaps = Array.from(unlinkedMaps);
+  stats.unlinkedAgents = Array.from(unlinkedAgents);
 
   return {
     migrated,
