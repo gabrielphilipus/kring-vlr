@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build and Packaging outputs
+dist/
+release/
+*.tmp
+
+# Media & Videos (do not commit heavy match recordings)
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+vs ARRANCADREAM.mp4
+
+# Python cache & OCR temp models
+__pycache__/
+*.py[cod]
+*$py.class
+temp_test/
+*.log
+
+# Environment and IDE
+.env
+.env.local
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

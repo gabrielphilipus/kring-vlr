@@ -1,0 +1,64 @@
+{
+  "name": "kring-vlr",
+  "version": "1.0.5",
+  "description": "Painel pessoal de VODs, lineups e estatísticas para Valorant",
+  "main": "electron/main.cjs",
+  "author": "Kring",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:portable": "npm run build && electron-builder --win portable"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "electron-updater": "^6.8.11",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.12",
+    "vite": "^7.1.7",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "com.kring.vlrstats",
+    "productName": "Kring VLR",
+    "publish": {
+      "provider": "github",
+      "owner": "gabrielphilipus",
+      "repo": "kring-vlr"
+    },
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kring VLR"
+    }
+  }
+}
