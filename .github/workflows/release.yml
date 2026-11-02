@@ -1,0 +1,49 @@
+name: Build & Release Kring VLR
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-job
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies & Build standalone analyzer
+        run: |
+          pip install pyinstaller rapidocr-onnxruntime opencv-python numpy onnxruntime
+          python analyzer/build_exe.py
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Build Vite frontend
+        run: npm run build
+
+      - name: Build and Publish Installer to GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish always

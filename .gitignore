@@ -1,0 +1,98 @@
+# Dependencies
+node_modules/
+
+# Build and Packaging outputs (heavy binaries out of git)
+dist/
+release/
+*.tmp
+build/
+!build/icon.ico
+
+# Media & Videos (do not commit heavy match recordings)
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+
+# Saves, Bancos Locais e Gabaritos de Partidas
+local.ground-truth*
+killfeed-cases.csv
+*.OFFLINE_PROOF
+local.*.csv
+*ground-truth*
+local.*.json
+local.truth.*
+*.db
+*.sqlite
+user_data/
+saves/
+matches_local*.json
+kring-vlr-data*.json
+kring-vlr-data*.bak
+*.bak
+
+# Pastas de Benchmark, Diagnósticos, Rascunhos e Relatórios
+scratch/
+scratch_*/
+benchmarks/
+rejections/
+headshots_data/
+headshots_dataset/
+rejected_double_generic/
+*report*.txt
+*comparison*.txt
+prompt.md
+prompt.*
+Logs Partidas/
+dumps/
+*.dump.json
+*debug-dump*.json
+*.roster.json
+.anonymizer-key.json
+*.anonymizer-key.json
+*.key.json
+
+# Suítes de Teste e Scripts de Diagnóstico Local (mantidos apenas localmente)
+tests/
+scripts/
+*.ini
+requirements-dev.txt
+ruff.toml
+.*_cache/
+.ruff_cache/
+RELATORIO_CALIBRACAO_ANALYZER.md
+ROTEIRO_TESTES_MANUAIS.md
+ARQUITETURA_E_MEMORIA.md
+
+# Python cache & OCR temp models & Binários Pesados
+__pycache__/
+*.py[cod]
+*$py.class
+temp_test/
+*.log
+analyzer/dist/
+analyzer/build/
+analyzer/*.exe
+analyzer/*.spec
+*.exe
+*.spec
+*.traineddata
+*.bat
+
+# Environment, IDE and OS files
+.env
+.env.local
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+
+.local/
+
+# Local code quality and tool configs (kept strictly local)
+.prettierignore
+.prettierrc
+eslint.config.js
+package.dev.json
+package-lock.dev.json
