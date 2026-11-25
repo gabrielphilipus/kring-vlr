@@ -348,18 +348,11 @@ function migrateAndNormalize(rawData, seed) {
   }
 
   const needsMigration = !currentVersion || currentVersion < 4;
-  let migrated;
-  let stats = null;
-
-  if (needsMigration) {
-    const result = migrateV3ToV4(rawData, {
-      catalogs: seed && seed.maps && seed.agents ? seed : undefined,
-    });
-    migrated = result.migrated;
-    stats = result.stats;
-  } else {
-    migrated = { ...rawData };
-  }
+  const result = migrateV3ToV4(rawData, {
+    catalogs: seed && seed.maps && seed.agents ? seed : undefined,
+  });
+  const migrated = result.migrated;
+  const stats = needsMigration ? result.stats : null;
 
   const formatted = formatDataPayload(migrated, seed);
   return {

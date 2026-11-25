@@ -41,6 +41,12 @@ export function formatDiscordReport(vod = {}) {
   let text = `${resultEmoji} **RELATÓRIO DE SCRIM — KRING VLR**\n`;
   text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   text += `📍 **Mapa:** \`${mapName}\` | ⚔️ **Placar:** **${resultLabel}** (\`${scoreFriendly} × ${scoreEnemy}\`)\n`;
+  const classificationParts = [];
+  if (vod.matchType) classificationParts.push(`🏷️ **Tipo:** \`${vod.matchType}\``);
+  if (vod.opponent) classificationParts.push(`🆚 **Adversário:** **${vod.opponent}**`);
+  if (classificationParts.length > 0) {
+    text += `${classificationParts.join(' | ')}\n`;
+  }
   if (vod.title) text += `🎯 **Treino:** *${vod.title}*\n`;
   text += `\n`;
 
@@ -123,6 +129,21 @@ export function formatDiscordReport(vod = {}) {
       text += `• ${name} (${s.agent || '—'}): ${s.kills}K / ${s.deaths}D (${s.kd_ratio}x)\n`;
     });
     text += `\`\`\`\n`;
+  }
+
+  const validNotes = Array.isArray(vod.reviewNotes)
+    ? vod.reviewNotes.filter((n) => n && String(n.text || '').trim())
+    : [];
+  if (validNotes.length > 0) {
+    text += `📝 **Marcações do Review (${validNotes.length}):**\n`;
+    validNotes.forEach((n) => {
+      const roundPart = n.round
+        ? ` (R${String(n.round).padStart(2, '0')})`
+        : '';
+      const tagPart = n.tag ? ` **[${n.tag}]**` : '';
+      text += `• \`${n.time || '00:00'}\`${roundPart}${tagPart} — ${String(n.text).trim()}\n`;
+    });
+    text += `\n`;
   }
 
   text += `*Gerado pelo painel Kring VLR*`;

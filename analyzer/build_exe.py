@@ -21,6 +21,22 @@ def build(if_missing: bool = False):
     script_path = os.path.join(analyzer_dir, "analyzer.py")
 
     templates_dir = os.path.join(analyzer_dir, "templates")
+    excluded_modules = [
+        "pytest",
+        "ruff",
+        "tkinter",
+        "matplotlib",
+        "scipy",
+        "pandas",
+        "IPython",
+        "notebook",
+        "unittest",
+        "pydoc",
+    ]
+    exclude_args = []
+    for mod in excluded_modules:
+        exclude_args.extend(["--exclude-module", mod])
+
     cmd = [
         sys.executable,
         "-m",
@@ -33,6 +49,7 @@ def build(if_missing: bool = False):
         "rapidocr_onnxruntime",
         "--collect-all",
         "onnxruntime",
+        *exclude_args,
         "--hidden-import",
         "interpret",
         "--hidden-import",
@@ -59,6 +76,7 @@ def build(if_missing: bool = False):
         print(f"\nSucesso! Executável gerado e disponível em:\n - {dist_exe}\n - {target_exe}")
     else:
         print(f"\nErro na compilação: código {res.returncode}")
+        sys.exit(res.returncode)
 
 
 if __name__ == "__main__":

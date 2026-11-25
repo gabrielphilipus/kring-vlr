@@ -1,29 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from './components/common/EmptyState.jsx';
+import { Field } from './components/common/Field.jsx';
 import { LightboxModal } from './components/common/LightboxModal.jsx';
-import { useKeyPress } from './hooks/useKeyPress.js';
+import { MetricCard } from './components/common/MetricCard.jsx';
+import { Modal } from './components/common/Modal.jsx';
+import { ResultBadge } from './components/common/ResultBadge.jsx';
+import { InteractiveVodReviewModal } from './components/vod/InteractiveVodReviewModal.jsx';
+import { useAppData } from './hooks/useAppData.js';
 import { CatalogManager } from './pages/Catalog/CatalogManager.jsx';
+import { StatsPage } from './pages/Stats/StatsPage.jsx';
 import { TrainingPage } from './pages/Training/TrainingPage.jsx';
+import { VetoSimulator } from './pages/Veto/VetoSimulator.jsx';
 import { copyToClipboard } from './utils/clipboard.js';
 import { compressImage } from './utils/image.js';
-import {
-  formatDate,
-  parseTimeToSeconds,
-  percent,
-  today,
-} from './utils/formatters.js';
+import { formatDate, percent, today } from './utils/formatters.js';
 import {
   cleanNick,
-  levenshtein,
   normalizeUrl,
   stripUtf8Bom,
   uid,
+  uniqueSorted,
 } from './utils/string.js';
 import { toNonNegativeNumberOrNull } from './utils/numbers.js';
 import {
   Activity,
-  AlertTriangle,
   ArrowDownToLine,
+  ArrowRight,
   ArrowUpFromLine,
   BarChart3,
   BookOpen,
@@ -31,43 +33,37 @@ import {
   ChevronDown,
   CircleHelp,
   ClipboardPaste,
+  Copy,
   Crosshair,
   ExternalLink,
   FileVideo2,
   Filter,
   FolderOpen,
-  ListFilter,
   Map as MapIcon,
+  Maximize2,
+  Moon,
   Pencil,
+  Play,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
+  Sun,
   Swords,
   Target,
   Trash2,
   Trophy,
   Upload,
+  Users,
   Video,
   X,
   Zap,
-  RotateCcw,
-  ArrowRight,
-  Ban,
-  Play,
-  Clock,
-  Sparkles,
-  Sun,
-  Moon,
-  RefreshCw,
-  Maximize2,
-  Minimize2,
-  Coins,
-  Copy,
-  Users,
 } from 'lucide-react';
 
 import {
   AGENT_ROLES,
+  MATCH_TYPES,
   RESULTS,
   ROUND_RESULTS,
   SIDES,
@@ -76,38 +72,29 @@ import { NAV_ITEMS } from './constants/navigation.js';
 import { TACTIC_CATEGORIES } from './constants/tactics.js';
 import { TRAINING_CATEGORIES } from './constants/training.js';
 import {
-  calcOpeningDuelStats,
-  calcRoundBalance,
-  calcSideStats,
   calcStats,
-  filterVodsByPeriod,
-  getBestAgent,
   getBestMap,
-  getWorstMap,
   groupStats,
-  sortCrossStats,
+  normalizeSide,
 } from './domain/stats.js';
 import { formatDiscordReport } from './domain/discord.js';
 import {
+  applyKillCorrection,
   createMatchExportPayload,
   validateAndParseMatchJson,
   createMatchImportRecord,
   getMatchExportFilename,
+  normalizeMatchType,
 } from './domain/matches.js';
 
 function App() {
-  const [data, setData] = useState({
-    vods: [],
-    lineups: [],
-    tactics: [],
-    training: [],
-    gameplans: [],
-    maps: [],
-    agents: [],
+  const [toast, setToast] = useState('');
+  const { data, setData, ready, dataLoadError, startFromScratch } = useAppData({
+    onToast: setToast,
   });
-  const [ready, setReady] = useState(false);
   const [view, setView] = useState('dashboard');
   const [modal, setModal] = useState(null);
+  const [clearVodsModal, setClearVodsModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [search, setSearch] = useState('');
@@ -115,16 +102,15 @@ function App() {
     map: 'Todos',
     agent: 'Todos',
     result: 'Todos',
+    matchType: 'Todos',
   });
-  const [toast, setToast] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
   const [theme, setTheme] = useState(
     () => localStorage.getItem('kring-theme') || 'dark'
   );
   const [updateInfo, setUpdateInfo] = useState(null);
-  const [dataLoadError, setDataLoadError] = useState(null);
   const [appVersion, setAppVersion] = useState(
-    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.1.3'
+    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.0'
   );
   const imageInputRef = useRef(null);
 
@@ -205,104 +191,6 @@ function App() {
   const importInputRef = useRef(null);
   const matchFileInputRef = useRef(null);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        let loaded;
-        if (window.kringAPI?.loadData) {
-          loaded = await window.kringAPI.loadData();
-        } else {
-          const raw = localStorage.getItem('kring-vlr-data');
-          loaded = raw
-            ? JSON.parse(raw)
-            : {
-                vods: [],
-                lineups: [],
-                tactics: [],
-                training: [],
-                gameplans: [],
-                maps: [],
-                agents: [],
-              };
-        }
-
-        if (!active) return;
-
-        // Se o carregamento indicar falha crítica de integridade ou incompatibilidade de versão:
-        if (loaded && loaded.ok === false) {
-          console.error('[App] Falha crítica de integridade:', loaded);
-          setDataLoadError(loaded);
-          if (loaded.reason === 'unsupported-version') {
-            setToast(
-              `Versão de dados incompatível (schemaVersion ${loaded.currentVersion}). Atualize o Kring VLR.`
-            );
-          } else {
-            setToast(
-              `ATENÇÃO: Arquivo de dados corrompido! O salvamento automático foi BLOQUEADO para proteger seus dados.`
-            );
-          }
-          // NÃO chama setReady(true), impedindo qualquer auto-save de rodar
-          return;
-        }
-
-        if (loaded?.migratedV4) {
-          setToast(
-            'Seus dados foram atualizados com sucesso para o formato v4 (cópia de segurança preservada).'
-          );
-        } else if (loaded?.recoveredFromBackup) {
-          const src = loaded.backupSource ? ` (${loaded.backupSource})` : '';
-          setToast(
-            `AVISO: Dados restaurados com sucesso a partir da cópia de segurança${src}.`
-          );
-        }
-
-        let seed = { maps: [], agents: [] };
-        if (!Array.isArray(loaded?.maps) || !Array.isArray(loaded?.agents)) {
-          try {
-            const response = await fetch('./catalogs.json');
-            if (response.ok) seed = await response.json();
-          } catch {
-            // Fallback seguro se catalogs.json padrão estiver ausente/inacessível
-          }
-        }
-
-        setData({
-          vods: Array.isArray(loaded?.vods) ? loaded.vods : [],
-          lineups: Array.isArray(loaded?.lineups) ? loaded.lineups : [],
-          tactics: Array.isArray(loaded?.tactics)
-            ? loaded.tactics.map((item) => ({
-                ...item,
-                category:
-                  item.category === 'Roubo de ultimate'
-                    ? 'Rounds de ultimate'
-                    : item.category,
-              }))
-            : [],
-          training: Array.isArray(loaded?.training) ? loaded.training : [],
-          gameplans: Array.isArray(loaded?.gameplans) ? loaded.gameplans : [],
-          maps: Array.isArray(loaded?.maps)
-            ? loaded.maps
-            : Array.isArray(seed.maps)
-              ? seed.maps
-              : [],
-          agents: Array.isArray(loaded?.agents)
-            ? loaded.agents
-            : Array.isArray(seed.agents)
-              ? seed.agents
-              : [],
-        });
-        setReady(true);
-      } catch (error) {
-        console.error(error);
-        if (active) setToast('Não foi possível carregar os dados salvos.');
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const handleStartFromScratch = () => {
     const confirmed = window.confirm(
       'Tem certeza de que deseja começar do zero?\n\n' +
@@ -311,37 +199,11 @@ function App() {
     );
     if (!confirmed) return;
 
-    setDataLoadError(null);
-    setData({
-      vods: [],
-      lineups: [],
-      tactics: [],
-      training: [],
-      gameplans: [],
-      maps: data.maps.length ? data.maps : [],
-      agents: data.agents.length ? data.agents : [],
-    });
-    setReady(true); // LIBERA o auto-save apenas após a confirmação explícita do usuário
+    startFromScratch();
     setToast(
       'Nova base iniciada com sucesso. Arquivo anterior preservado na pasta de dados.'
     );
   };
-
-  useEffect(() => {
-    if (!ready) return undefined;
-    const timer = window.setTimeout(async () => {
-      try {
-        if (window.kringAPI?.saveData) await window.kringAPI.saveData(data);
-        else localStorage.setItem('kring-vlr-data', JSON.stringify(data));
-      } catch (error) {
-        console.error(error);
-        setToast(
-          'Falha ao salvar. Faça uma cópia de segurança dos seus dados.'
-        );
-      }
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [data, ready]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -415,6 +277,10 @@ function App() {
             deaths: '',
             assists: '',
             result: 'Vitória',
+            matchType: '',
+            opponent: '',
+            startingSide: '',
+            reviewNotes: [],
             date: today(),
             notes: '',
             gamePlan: '',
@@ -856,6 +722,10 @@ function App() {
         roundsWon: toNonNegativeNumberOrNull(form.roundsWon),
         roundsLost: toNonNegativeNumberOrNull(form.roundsLost),
         result: RESULTS.includes(form.result) ? form.result : 'Vitória',
+        matchType: normalizeMatchType(form.matchType),
+        opponent: (form.opponent || '').trim(),
+        startingSide: normalizeSide(form.startingSide) || '',
+        reviewNotes: Array.isArray(form.reviewNotes) ? form.reviewNotes : [],
         date: form.date || today(),
         roundResults: {
           Ataque: { ...(form.roundResults?.Ataque || {}) },
@@ -1348,6 +1218,64 @@ function App() {
     }
   };
 
+  const handleUpdateVodStartingSide = (vodId, side) => {
+    const normalized = normalizeSide(side) || '';
+    setData((previous) => ({
+      ...previous,
+      vods: previous.vods.map((v) =>
+        v.id === vodId ? { ...v, startingSide: normalized } : v
+      ),
+    }));
+    setReviewVod((prev) =>
+      prev && prev.id === vodId ? { ...prev, startingSide: normalized } : prev
+    );
+    setToast(
+      normalized
+        ? `Lado inicial definido: ${normalized}.`
+        : 'Lado inicial removido.'
+    );
+  };
+
+  const handleUpdateVodReviewNotes = (vodId, nextNotes) => {
+    const safeNotes = Array.isArray(nextNotes) ? nextNotes : [];
+    setData((previous) => ({
+      ...previous,
+      vods: previous.vods.map((v) =>
+        v.id === vodId ? { ...v, reviewNotes: safeNotes } : v
+      ),
+    }));
+    setReviewVod((prev) =>
+      prev && prev.id === vodId ? { ...prev, reviewNotes: safeNotes } : prev
+    );
+  };
+
+  const handleUpdateVodKill = (vodId, killRef, updates) => {
+    setData((previous) => ({
+      ...previous,
+      vods: previous.vods.map((v) =>
+        v.id === vodId
+          ? {
+              ...v,
+              analysisData: applyKillCorrection(v.analysisData, killRef, updates),
+            }
+          : v
+      ),
+    }));
+    setReviewVod((prev) =>
+      prev && prev.id === vodId
+        ? {
+            ...prev,
+            analysisData: applyKillCorrection(
+              prev.analysisData,
+              killRef,
+              updates
+            ),
+          }
+        : prev
+    );
+    setToast('Abate corrigido na timeline!');
+  };
+
   const handleExportMatch = (vod) => {
     try {
       const payload = createMatchExportPayload(vod);
@@ -1516,7 +1444,15 @@ function App() {
     return data.vods.filter((vod) => {
       const matchesSearch =
         !q ||
-        [vod.title, vod.map, vod.agent, vod.notes, vod.result].some((value) =>
+        [
+          vod.title,
+          vod.opponent,
+          vod.matchType,
+          vod.map,
+          vod.agent,
+          vod.notes,
+          vod.result,
+        ].some((value) =>
           String(value || '')
             .toLowerCase()
             .includes(q)
@@ -1525,7 +1461,9 @@ function App() {
         matchesSearch &&
         (filters.map === 'Todos' || vod.map === filters.map) &&
         (filters.agent === 'Todos' || vod.agent === filters.agent) &&
-        (filters.result === 'Todos' || vod.result === filters.result)
+        (filters.result === 'Todos' || vod.result === filters.result) &&
+        (filters.matchType === 'Todos' ||
+          (vod.matchType || '') === filters.matchType)
       );
     });
   }, [data.vods, search, filters]);
@@ -1552,6 +1490,36 @@ function App() {
 
   const setFilter = (key, value) =>
     setFilters((previous) => ({ ...previous, [key]: value }));
+
+  const clearVods = (onlyFiltered = false) => {
+    if (onlyFiltered) {
+      const idsToRemove = new Set(filteredVods.map((vod) => vod.id));
+      setData((previous) => ({
+        ...previous,
+        vods: previous.vods.filter((vod) => !idsToRemove.has(vod.id)),
+      }));
+      if (reviewVod && idsToRemove.has(reviewVod.id)) {
+        setReviewVod(null);
+      }
+      setToast(`${idsToRemove.size} VOD(s) filtrado(s) removido(s).`);
+    } else {
+      const removedCount = data.vods.length;
+      setData((previous) => ({
+        ...previous,
+        vods: [],
+      }));
+      setReviewVod(null);
+      setSearch('');
+      setFilters({
+        map: 'Todos',
+        agent: 'Todos',
+        result: 'Todos',
+        matchType: 'Todos',
+      });
+      setToast(`Todos os ${removedCount} VOD(s) foram removidos da biblioteca.`);
+    }
+    setClearVodsModal(false);
+  };
 
   const handleCopyDiscordReport = async (vod) => {
     const text = formatDiscordReport(vod);
@@ -1850,7 +1818,17 @@ function App() {
                     padrões de desempenho.
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {data.vods.length > 0 && (
+                    <button
+                      type="button"
+                      className="button button-danger-quiet"
+                      onClick={() => setClearVodsModal(true)}
+                      title="Excluir todos os VODs ou limpar os VODs filtrados"
+                    >
+                      <Trash2 size={15} /> Excluir todos
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="button button-secondary"
@@ -1873,7 +1851,7 @@ function App() {
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Buscar por título, mapa ou agente..."
+                    placeholder="Buscar por título, adversário, mapa ou agente..."
                   />
                 </div>
                 <div className="filter-field">
@@ -1901,6 +1879,19 @@ function App() {
                         <option key={value}>{value}</option>
                       )
                     )}
+                  </select>
+                  <ChevronDown size={14} />
+                </div>
+                <div className="filter-field">
+                  <select
+                    aria-label="Filtrar por tipo"
+                    value={filters.matchType}
+                    onChange={(e) => setFilter('matchType', e.target.value)}
+                  >
+                    <option>Todos</option>
+                    {MATCH_TYPES.map((value) => (
+                      <option key={value}>{value}</option>
+                    ))}
                   </select>
                   <ChevronDown size={14} />
                 </div>
@@ -2137,6 +2128,29 @@ function App() {
                     placeholder="Ex.: VCB — Remo vs Elevate — Jogo 2"
                   />
                 </Field>
+                <div className="form-row">
+                  <Field label="Tipo de partida">
+                    <select
+                      aria-label="Tipo de partida"
+                      value={form.matchType || ''}
+                      onChange={(e) => updateForm('matchType', e.target.value)}
+                    >
+                      <option value="">Não informado</option>
+                      {MATCH_TYPES.map((typeOpt) => (
+                        <option key={typeOpt} value={typeOpt}>
+                          {typeOpt}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Adversário">
+                    <input
+                      value={form.opponent || ''}
+                      onChange={(e) => updateForm('opponent', e.target.value)}
+                      placeholder="Ex.: Team Liquid, LOUD..."
+                    />
+                  </Field>
+                </div>
                 <Field label="Link da VOD">
                   <div className="input-with-icon">
                     <Video size={16} />
@@ -2794,6 +2808,35 @@ function App() {
                     />
                   </Field>
                 </div>
+                <Field label="Lado inicial da partida">
+                  <div className="result-choice">
+                    {[
+                      { value: '', label: 'Não informado' },
+                      { value: 'Ataque', label: 'Ataque' },
+                      { value: 'Defesa', label: 'Defesa' },
+                    ].map((opt) => {
+                      const active =
+                        (normalizeSide(form.startingSide) || '') === opt.value;
+                      return (
+                        <button
+                          type="button"
+                          key={opt.label}
+                          onClick={() => updateForm('startingSide', opt.value)}
+                          className={`result-option ${active ? 'selected' : ''}`}
+                        >
+                          <span className="result-radio">
+                            {active && <Check size={11} />}
+                          </span>
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="helper-text">
+                    Preenche automaticamente os rounds de Ataque vs Defesa em
+                    partidas analisadas (R1–12, R13–24 e OT).
+                  </span>
+                </Field>
                 <Field label="Rounds por lado">
                   <div className="round-results-grid">
                     {['Ataque', 'Defesa'].map((side) => (
@@ -3567,12 +3610,59 @@ function App() {
         </Modal>
       )}
 
+      {clearVodsModal && (
+        <Modal
+          title="Excluir VODs da biblioteca"
+          subtitle="Esta ação remove os registros de partidas salvos localmente."
+          onClose={() => setClearVodsModal(false)}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <p style={{ margin: 0, lineHeight: 1.5 }}>
+              Você está prestes a excluir{' '}
+              <strong>{data.vods.length} partida(s)</strong> da Biblioteca de
+              VODs. Os seus Lineups, Táticos, Gameplans, Treinos e Catálogos não
+              serão afetados.
+            </p>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="button button-quiet"
+                onClick={() => setClearVodsModal(false)}
+              >
+                Cancelar
+              </button>
+              {filteredVods.length > 0 &&
+                filteredVods.length < data.vods.length && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => clearVods(true)}
+                  >
+                    <Trash2 size={15} /> Excluir apenas filtrados (
+                    {filteredVods.length})
+                  </button>
+                )}
+              <button
+                type="button"
+                className="button button-danger-solid"
+                onClick={() => clearVods(false)}
+              >
+                <Trash2 size={15} /> Excluir todos ({data.vods.length})
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {reviewVod && (
         <InteractiveVodReviewModal
           vod={reviewVod}
           onClose={() => setReviewVod(null)}
           onToast={setToast}
           onExportMatch={handleExportMatch}
+          onUpdateStartingSide={handleUpdateVodStartingSide}
+          onUpdateReviewNotes={handleUpdateVodReviewNotes}
+          onUpdateKill={handleUpdateVodKill}
         />
       )}
 
@@ -3609,742 +3699,6 @@ function App() {
         </div>
       )}
     </div>
-  );
-}
-
-function uniqueSorted(values) {
-  return Array.from(new Set(values.filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b, 'pt-BR')
-  );
-}
-
-function makeVetoSteps(format, grandFinal, upperTeam) {
-  if (format === 'bo1') {
-    return [
-      { kind: 'ban', team: 'A' },
-      { kind: 'ban', team: 'B' },
-      { kind: 'ban', team: 'A' },
-      { kind: 'ban', team: 'B' },
-      { kind: 'ban', team: 'A' },
-      { kind: 'ban', team: 'B' },
-      { kind: 'side', team: 'A', slot: 1, decider: true },
-    ];
-  }
-  const steps =
-    format === 'bo5' && grandFinal
-      ? [
-          { kind: 'ban', team: upperTeam },
-          { kind: 'ban', team: upperTeam },
-        ]
-      : [
-          { kind: 'ban', team: 'A' },
-          { kind: 'ban', team: 'B' },
-        ];
-  steps.push(
-    { kind: 'pick', team: 'A', slot: 1 },
-    { kind: 'side', team: 'B', slot: 1 },
-    { kind: 'pick', team: 'B', slot: 2 },
-    { kind: 'side', team: 'A', slot: 2 }
-  );
-  if (format === 'bo3') {
-    steps.push(
-      { kind: 'ban', team: 'A' },
-      { kind: 'ban', team: 'B' },
-      { kind: 'side', team: 'A', slot: 3, decider: true }
-    );
-  } else {
-    steps.push(
-      { kind: 'pick', team: 'A', slot: 3 },
-      { kind: 'side', team: 'B', slot: 3 },
-      { kind: 'pick', team: 'B', slot: 4 },
-      { kind: 'side', team: 'A', slot: 4 },
-      { kind: 'side', team: 'B', slot: 5, decider: true }
-    );
-  }
-  return steps;
-}
-
-function VetoSimulator({ maps, mapsStats = [], onToast }) {
-  const mapNames = maps.map((item) => item.name);
-  const [format, setFormat] = useState('bo3');
-  const [grandFinal, setGrandFinal] = useState(false);
-  const [upperTeam, setUpperTeam] = useState('A');
-  const [selectedPool, setSelectedPool] = useState(null);
-  const pool = useMemo(() => {
-    const base = selectedPool ?? mapNames;
-    const kept = base.filter((name) => mapNames.includes(name)).slice(0, 7);
-    return kept.length >= 7
-      ? kept
-      : [
-          ...kept,
-          ...mapNames
-            .filter((name) => !kept.includes(name))
-            .slice(0, 7 - kept.length),
-        ];
-  }, [selectedPool, mapNames]);
-  const mapArtwork = Object.fromEntries(
-    maps
-      .filter((item) => item.previewUrl)
-      .map((item) => [item.name, item.previewUrl])
-  );
-  const [myTeam, setMyTeam] = useState('A');
-  const [teamNames, setTeamNames] = useState({ A: 'Time A', B: 'Time B' });
-  const [history, setHistory] = useState([]);
-  const [started, setStarted] = useState(false);
-  const [coinResult, setCoinResult] = useState(null);
-  const [isFlipping, setIsFlipping] = useState(false);
-
-  const statsByMap = useMemo(() => {
-    const map = new Map();
-    (mapsStats || []).forEach((st) => {
-      if (st.name) map.set(st.name, st);
-    });
-    return map;
-  }, [mapsStats]);
-
-  const steps = useMemo(
-    () => makeVetoSteps(format, grandFinal, upperTeam),
-    [format, grandFinal, upperTeam]
-  );
-  const currentStep = steps[history.length];
-  const remainingMaps = pool.filter(
-    (map) =>
-      !history.some(
-        (item) =>
-          (item.kind === 'ban' || item.kind === 'pick') && item.map === map
-      )
-  );
-  const pickedMaps = history.filter((item) => item.kind === 'pick');
-  const activeMap =
-    currentStep?.kind === 'side'
-      ? currentStep.decider
-        ? remainingMaps[0]
-        : pickedMaps.find((item) => item.slot === currentStep.slot)?.map
-      : '';
-  const complete = started && history.length === steps.length;
-
-  const flipCoin = () => {
-    setIsFlipping(true);
-    setTimeout(() => {
-      const winner = Math.random() < 0.5 ? 'A' : 'B';
-      const winnerName =
-        winner === 'A' ? teamNames.A || 'Time A' : teamNames.B || 'Time B';
-      setCoinResult({ winner, name: winnerName });
-      setIsFlipping(false);
-    }, 350);
-  };
-
-  const applyCoinWinnerAsTeamA = () => {
-    if (coinResult?.winner === 'B') {
-      const newA = teamNames.B;
-      const newB = teamNames.A;
-      setTeamNames({ A: newA, B: newB });
-      setCoinResult({ winner: 'A', name: newA });
-      if (onToast) onToast(`${newA} agora é o Time A!`);
-    }
-  };
-
-  const copyVetoToDiscord = async () => {
-    const formatLabel =
-      format === 'bo1'
-        ? 'MD1 / BO1'
-        : format === 'bo3'
-          ? 'MD3 / BO3'
-          : 'MD5 / BO5';
-    let text = `**RESUMO DO MAP VETO — ${formatLabel}**\n`;
-    text += `**${teamNames.A}** vs **${teamNames.B}**\n\n`;
-    text += `**Histórico de Escolhas:**\n`;
-
-    history.forEach((step, idx) => {
-      const num = idx + 1;
-      const team = teamNames[step.team] || `Time ${step.team}`;
-      if (step.kind === 'ban') {
-        text += `• ${num}. **${team}** baniu **${step.map}**\n`;
-      } else if (step.kind === 'pick') {
-        text += `• ${num}. **${team}** escolheu **${step.map}** (Mapa ${step.slot})\n`;
-      } else if (step.kind === 'side') {
-        text += `• ${num}. **${team}** escolheu começar no lado **${step.side}** no mapa **${step.map}**\n`;
-      }
-    });
-
-    text += `\n**Ordem Oficial da Série:**\n`;
-    const totalMaps = format === 'bo1' ? 1 : format === 'bo3' ? 3 : 5;
-    for (let i = 0; i < totalMaps; i++) {
-      const mapItem = pickedMaps.find((item) => item.slot === i + 1);
-      const finalMap =
-        i === (format === 'bo1' ? 0 : format === 'bo3' ? 2 : 4)
-          ? remainingMaps.length === 1
-            ? remainingMaps[0]
-            : ''
-          : '';
-      const map = mapItem?.map || finalMap;
-      const sideItem = history.find(
-        (item) => item.kind === 'side' && item.slot === i + 1
-      );
-      const sideText = sideItem
-        ? ` (${teamNames[sideItem.team]} começa de ${sideItem.side})`
-        : '';
-      const isDecider = format === 'bo1' || i === totalMaps - 1;
-      const label =
-        totalMaps === 1
-          ? 'Mapa Único'
-          : isDecider
-            ? 'Decider'
-            : `Mapa ${i + 1}`;
-      text += `**${label}**: **${map || 'A definir'}**${sideText}\n`;
-    }
-
-    text += `\n*Gerado pelo KRING Valorant Analyzer*`;
-
-    const ok = await copyToClipboard(text);
-    if (ok) {
-      if (onToast) onToast('Resumo copiado para a área de transferência!');
-    } else {
-      if (onToast) onToast('Não foi possível copiar o resumo.');
-    }
-  };
-
-  const changePool = (map) =>
-    setSelectedPool((previous) => {
-      const current = previous ?? pool;
-      return current.includes(map)
-        ? current.filter((item) => item !== map)
-        : current.length < 7
-          ? [...current, map]
-          : current;
-    });
-  const start = () => {
-    setHistory([]);
-    setStarted(true);
-  };
-  const reset = () => {
-    setHistory([]);
-    setStarted(false);
-    setCoinResult(null);
-    setSelectedPool(null);
-  };
-  const choose = (value) => {
-    if (!currentStep) return;
-    setHistory((previous) => [
-      ...previous,
-      {
-        ...currentStep,
-        ...(currentStep.kind === 'side'
-          ? { side: value, map: activeMap }
-          : { map: value }),
-      },
-    ]);
-  };
-  const undo = () => setHistory((previous) => previous.slice(0, -1));
-  const updateTeam = (team, value) =>
-    setTeamNames((previous) => ({ ...previous, [team]: value }));
-  const stepTitle = (step) =>
-    step?.kind === 'ban'
-      ? 'Banir um mapa'
-      : step?.kind === 'pick'
-        ? `Escolher mapa ${step.slot}`
-        : step?.decider
-          ? `Escolher lado no mapa decisivo${activeMap ? ` (${activeMap})` : ''}`
-          : `Escolher lado do mapa ${step?.slot}${activeMap ? ` (${activeMap})` : ''}`;
-
-  return (
-    <section className="veto-page">
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">SIMULAÇÃO DE SÉRIE</div>
-          <h1>Map veto</h1>
-          <p>
-            Simule a ordem oficial de bans, picks e escolha de lado em uma série
-            do VCT.
-          </p>
-        </div>
-        {started && (
-          <button className="button button-quiet" onClick={reset}>
-            <RotateCcw size={15} /> Reiniciar
-          </button>
-        )}
-      </div>
-      {!started ? (
-        <>
-          <div className="veto-setup-grid">
-            <div className="panel veto-setup-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Configurar matchup</h2>
-                  <p>Defina o formato e qual equipe você representa.</p>
-                </div>
-                <Swords size={18} className="muted-icon" />
-              </div>
-              <div className="veto-format-choice">
-                <button
-                  className={format === 'bo1' ? 'selected' : ''}
-                  onClick={() => setFormat('bo1')}
-                >
-                  <strong>BO1</strong>
-                  <span>Melhor de 1 · 1 mapa</span>
-                </button>
-                <button
-                  className={format === 'bo3' ? 'selected' : ''}
-                  onClick={() => setFormat('bo3')}
-                >
-                  <strong>BO3</strong>
-                  <span>Melhor de 3 · 3 mapas</span>
-                </button>
-                <button
-                  className={format === 'bo5' ? 'selected' : ''}
-                  onClick={() => setFormat('bo5')}
-                >
-                  <strong>BO5</strong>
-                  <span>Melhor de 5 · 5 mapas</span>
-                </button>
-              </div>
-              {format === 'bo5' && (
-                <div className="veto-final-config">
-                  <label className="veto-final-toggle">
-                    <input
-                      type="checkbox"
-                      checked={grandFinal}
-                      onChange={(event) => setGrandFinal(event.target.checked)}
-                    />
-                    <span>
-                      <strong>Grande final de eliminação dupla</strong>
-                      <small>
-                        O time da chave superior bane os dois primeiros mapas.
-                      </small>
-                    </span>
-                  </label>
-                  {grandFinal && (
-                    <div className="veto-upper-team">
-                      <span className="field-label">
-                        Time da chave superior
-                      </span>
-                      <div className="veto-side-choice">
-                        <button
-                          className={upperTeam === 'A' ? 'selected' : ''}
-                          onClick={() => setUpperTeam('A')}
-                        >
-                          Time A
-                        </button>
-                        <button
-                          className={upperTeam === 'B' ? 'selected' : ''}
-                          onClick={() => setUpperTeam('B')}
-                        >
-                          Time B
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              <div className="veto-team-fields">
-                <label className="field">
-                  <span className="field-label">Nome do Time A</span>
-                  <input
-                    value={teamNames.A}
-                    onChange={(event) => updateTeam('A', event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">Nome do Time B</span>
-                  <input
-                    value={teamNames.B}
-                    onChange={(event) => updateTeam('B', event.target.value)}
-                  />
-                </label>
-              </div>
-              <div className="veto-coin-toss-row">
-                <button
-                  type="button"
-                  className="button button-quiet button-small"
-                  onClick={flipCoin}
-                  disabled={isFlipping}
-                >
-                  <Coins size={14} />{' '}
-                  {isFlipping
-                    ? 'Sorteando moeda...'
-                    : 'Sorteio de moeda (Cara ou Coroa)'}
-                </button>
-                {coinResult && (
-                  <span className="coin-result-tag">
-                    🪙 <strong>{coinResult.name}</strong> venceu a moeda!
-                    {coinResult.winner === 'B' && (
-                      <button
-                        type="button"
-                        className="button button-quiet button-micro"
-                        style={{
-                          marginLeft: 6,
-                          padding: '2px 7px',
-                          fontSize: 10,
-                          height: 22,
-                        }}
-                        onClick={applyCoinWinnerAsTeamA}
-                        title="Colocar o vencedor como Time A (para começar o veto)"
-                      >
-                        Definir como Time A
-                      </button>
-                    )}
-                  </span>
-                )}
-              </div>
-              <div className="field" style={{ marginTop: 14 }}>
-                <span className="field-label">Você representa</span>
-                <div className="veto-side-choice">
-                  <button
-                    className={myTeam === 'A' ? 'selected' : ''}
-                    onClick={() => setMyTeam('A')}
-                  >
-                    Sou Time A ({teamNames.A})
-                  </button>
-                  <button
-                    className={myTeam === 'B' ? 'selected' : ''}
-                    onClick={() => setMyTeam('B')}
-                  >
-                    Sou Time B ({teamNames.B})
-                  </button>
-                </div>
-                <span className="helper-text">
-                  No formato VCT, o Time A inicia o processo de veto.
-                </span>
-              </div>
-            </div>
-            <div className="panel veto-pool-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Pool de mapas</h2>
-                  <p>Selecione exatamente 7 mapas para esta série.</p>
-                </div>
-                <span className="small-counter">{pool.length} / 7</span>
-              </div>
-              <div className="veto-pool-grid">
-                {mapNames.map((map) => (
-                  <button
-                    key={map}
-                    className={`veto-pool-chip ${pool.includes(map) ? 'active' : ''}`}
-                    onClick={() => changePool(map)}
-                    disabled={!pool.includes(map) && pool.length >= 7}
-                    aria-pressed={pool.includes(map)}
-                  >
-                    <span className="veto-pool-check">
-                      {pool.includes(map) && <Check size={12} />}
-                    </span>
-                    {map}
-                  </button>
-                ))}
-              </div>
-              <p className="veto-pool-note">
-                <CircleHelp size={14} /> O pool pode variar entre torneios.
-                Ajuste os mapas conforme o evento que quer simular. As imagens
-                carregam pela internet; sem conexão, os cards usam fundos
-                coloridos.
-              </p>
-            </div>
-          </div>
-          <div className="veto-setup-footer">
-            <span>
-              <ShieldCheck size={15} /> Formato VCT 2026 · escolha todas as
-              ações dos dois times
-            </span>
-            <button
-              className="button button-primary"
-              disabled={pool.length !== 7}
-              onClick={start}
-            >
-              Começar simulação <ArrowRight size={16} />
-            </button>
-          </div>
-        </>
-      ) : (
-        <div className="veto-simulation-layout">
-          <div className="veto-main-column">
-            <div className="panel veto-board">
-              <div className="veto-board-top">
-                <div>
-                  <span className="eyebrow">
-                    {format.toUpperCase()} · {teamNames.A} VS {teamNames.B}
-                  </span>
-                  <h2>
-                    {complete ? 'Veto concluído' : 'Sequência do map veto'}
-                  </h2>
-                </div>
-                <div className="veto-progress">
-                  <span>
-                    {history.length} / {steps.length}
-                  </span>
-                  <div className="progress-track">
-                    <div
-                      className="progress-fill"
-                      style={{
-                        width: `${(history.length / steps.length) * 100}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-              {currentStep && (
-                <div
-                  className="veto-turn-card"
-                  key={`${history.length}-${currentStep.kind}`}
-                >
-                  <div className="veto-turn-number">
-                    ETAPA {history.length + 1}
-                  </div>
-                  <div className="veto-turn-heading">
-                    <div>
-                      <span className="veto-turn-kicker">
-                        {currentStep.kind === 'ban'
-                          ? 'BANIMENTO'
-                          : currentStep.kind === 'pick'
-                            ? 'MAP PICK'
-                            : 'LADO'}
-                      </span>
-                      <h3>{stepTitle(currentStep)}</h3>
-                    </div>
-                    <div className={`veto-team-badge team-${currentStep.team}`}>
-                      <span>
-                        {currentStep.team === myTeam
-                          ? 'SUA EQUIPE'
-                          : 'OUTRA EQUIPE'}
-                      </span>
-                      <strong>{teamNames[currentStep.team]}</strong>
-                    </div>
-                  </div>
-                  {currentStep.kind === 'side' ? (
-                    <div className="veto-choice-grid sides">
-                      <button onClick={() => choose('Ataque')}>
-                        <Swords size={18} />
-                        <strong>Ataque</strong>
-                        <span>Começar no lado atacante</span>
-                      </button>
-                      <button onClick={() => choose('Defesa')}>
-                        <ShieldCheck size={18} />
-                        <strong>Defesa</strong>
-                        <span>Começar no lado defensor</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="veto-choice-grid maps">
-                      {remainingMaps.map((map, index) => {
-                        const stat = statsByMap.get(map);
-                        const hasDecisions = stat && stat.decisions > 0;
-                        return (
-                          <button
-                            key={map}
-                            className={`veto-map-choice map-tone-${index % 5} ${mapArtwork[map] ? 'has-map-art' : ''}`}
-                            style={
-                              mapArtwork[map]
-                                ? {
-                                    backgroundImage: `linear-gradient(180deg, rgba(8, 14, 24, .25) 0%, rgba(8, 14, 24, .52) 38%, rgba(8, 14, 24, .96) 100%), url("${mapArtwork[map]}")`,
-                                  }
-                                : undefined
-                            }
-                            onClick={() => choose(map)}
-                          >
-                            <div className="veto-map-badges-row">
-                              {hasDecisions ? (
-                                stat.winrate >= 60 ? (
-                                  <span
-                                    className="veto-map-badge favor"
-                                    title={`${stat.wins}V - ${stat.losses}D em scrims/partidas`}
-                                  >
-                                    ⭐ {Math.round(stat.winrate)}% WR
-                                  </span>
-                                ) : stat.winrate <= 40 ? (
-                                  <span
-                                    className="veto-map-badge ban-tip"
-                                    title={`${stat.wins}V - ${stat.losses}D em scrims/partidas`}
-                                  >
-                                    Ban ({Math.round(stat.winrate)}%)
-                                  </span>
-                                ) : (
-                                  <span
-                                    className="veto-map-badge neutral"
-                                    title={`${stat.wins}V - ${stat.losses}D em scrims/partidas`}
-                                  >
-                                    {Math.round(stat.winrate)}% WR
-                                  </span>
-                                )
-                              ) : (
-                                <span className="veto-map-badge neutral">
-                                  Sem dados
-                                </span>
-                              )}
-                            </div>
-                            <span className="veto-map-index">
-                              {String(index + 1).padStart(2, '0')}
-                            </span>
-                            <strong>{map}</strong>
-                            <span className="veto-choice-verb">
-                              {currentStep.kind === 'ban' ? (
-                                <>
-                                  <Ban size={13} /> Banir mapa
-                                </>
-                              ) : (
-                                <>
-                                  <ArrowRight size={13} /> Escolher mapa
-                                </>
-                              )}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-              {complete && (
-                <div className="veto-complete-banner">
-                  <Check size={18} />
-                  <div>
-                    <strong>Map veto finalizado</strong>
-                    <span>
-                      Confira a ordem de mapas e lados na coluna lateral.
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button
-                      className="button button-primary button-small"
-                      onClick={copyVetoToDiscord}
-                    >
-                      <Copy size={14} /> Copiar p/ Discord
-                    </button>
-                    <button
-                      className="button button-secondary button-small"
-                      onClick={reset}
-                    >
-                      <RotateCcw size={14} /> Nova simulação
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="panel veto-history-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Histórico de decisões</h2>
-                  <p>Cada ação aparece na ordem em que foi escolhida.</p>
-                </div>
-                <button
-                  className="icon-button"
-                  disabled={!history.length}
-                  title="Desfazer última ação"
-                  onClick={undo}
-                >
-                  <RotateCcw size={15} />
-                </button>
-              </div>
-              {history.length ? (
-                <div className="veto-history-list">
-                  {history.map((item, index) => (
-                    <div
-                      className="veto-history-item"
-                      key={`${index}-${item.kind}-${item.map}`}
-                    >
-                      <span className={`history-step-icon ${item.kind}`}>
-                        {item.kind === 'ban' ? (
-                          <Ban size={14} />
-                        ) : item.kind === 'pick' ? (
-                          <MapIcon size={14} />
-                        ) : (
-                          <Swords size={14} />
-                        )}
-                      </span>
-                      <span className="history-order">
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <span className="history-team">
-                        <strong>{teamNames[item.team]}</strong>
-                        <small>
-                          {item.kind === 'ban'
-                            ? 'BANIU'
-                            : item.kind === 'pick'
-                              ? `PICKOU MAPA ${item.slot}`
-                              : `ESCOLHEU LADO · ${item.map}`}
-                        </small>
-                      </span>
-                      <strong className="history-choice">
-                        {item.kind === 'side'
-                          ? `${item.side} · ${item.map}`
-                          : item.map}
-                      </strong>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="veto-history-empty">
-                  <MapIcon size={21} />
-                  <span>Suas decisões vão aparecer aqui.</span>
-                </div>
-              )}
-            </div>
-          </div>
-          <aside className="panel veto-series-panel">
-            <div className="panel-heading">
-              <div>
-                <h2>Ordem da série</h2>
-                <p>Mapas definidos até agora</p>
-              </div>
-            </div>
-            <div className="veto-series-list">
-              {Array.from(
-                { length: format === 'bo1' ? 1 : format === 'bo3' ? 3 : 5 },
-                (_, index) => {
-                  const mapItem = pickedMaps.find(
-                    (item) => item.slot === index + 1
-                  );
-                  const finalMap =
-                    index === (format === 'bo1' ? 0 : format === 'bo3' ? 2 : 4)
-                      ? remainingMaps.length === 1
-                        ? remainingMaps[0]
-                        : ''
-                      : '';
-                  const map = mapItem?.map || finalMap;
-                  const sideItem = history.find(
-                    (item) => item.kind === 'side' && item.slot === index + 1
-                  );
-                  const selectorTeam = sideItem?.team;
-                  const startingSide = sideItem?.side;
-                  const isDecider =
-                    format === 'bo1' || index === (format === 'bo3' ? 2 : 4);
-                  return (
-                    <div
-                      className={`veto-series-map ${map ? 'revealed' : ''}`}
-                      key={index}
-                    >
-                      <span className="series-map-index">
-                        {format === 'bo1'
-                          ? 'MAPA DECISIVO (MD1)'
-                          : isDecider
-                            ? `MAPA ${index + 1} · DECIDER`
-                            : `MAPA ${index + 1}`}
-                      </span>
-                      <strong>{map || 'A definir'}</strong>
-                      {map && (
-                        <span className="series-map-side">
-                          {startingSide
-                            ? `${teamNames[selectorTeam]} começa ${startingSide.toLowerCase()}`
-                            : 'Lado ainda não escolhido'}
-                        </span>
-                      )}
-                    </div>
-                  );
-                }
-              )}
-            </div>
-            <div className="veto-legend">
-              <span>
-                <i className="legend-ban" /> Banido
-              </span>
-              <span>
-                <i className="legend-pick" /> Pick
-              </span>
-              <span>
-                <i className="legend-decider" /> Decider
-              </span>
-            </div>
-          </aside>
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -5639,31 +4993,6 @@ function Dashboard({
   );
 }
 
-function MetricCard({ icon: Icon, label, value, detail, accent }) {
-  return (
-    <div className="metric-card">
-      <div className={`metric-icon ${accent}`}>
-        <Icon size={18} />
-      </div>
-      <div className="metric-label">{label}</div>
-      <div className="metric-value">{value}</div>
-      <div className="metric-detail">{detail}</div>
-      <div className={`metric-accent-line ${accent}`} />
-    </div>
-  );
-}
-
-function ResultBadge({ result }) {
-  const type =
-    result === 'Vitória' ? 'win' : result === 'Derrota' ? 'loss' : 'draw';
-  return (
-    <span className={`result-badge ${type}`}>
-      <span />
-      {result || '—'}
-    </span>
-  );
-}
-
 function VodCard({
   vod,
   gameplan,
@@ -5683,7 +5012,15 @@ function VodCard({
       <div className="vod-card-main">
         <div className="vod-card-title-row">
           <h3>{vod.title}</h3>
-          <ResultBadge result={vod.result} />
+          <div className="vod-card-badges">
+            {vod.matchType && (
+              <span className="vod-type-pill">{vod.matchType}</span>
+            )}
+            {vod.opponent && (
+              <span className="vod-opponent-pill">vs {vod.opponent}</span>
+            )}
+            <ResultBadge result={vod.result} />
+          </div>
         </div>
         <div className="vod-meta-row">
           <span>
@@ -5870,1790 +5207,6 @@ function LineupCard({ lineup, onEdit, onDelete, onOpen, onPreview, onCopy }) {
         </div>
       </div>
     </article>
-  );
-}
-
-function StatsPage({ vods, gameplans = [], onToast }) {
-  const [selectedMap, setSelectedMap] = useState('Todos');
-  const [selectedAgent, setSelectedAgent] = useState('Todos');
-  const [period, setPeriod] = useState('all'); // 'all' | '7d' | '30d' | '90d'
-  const [crossSort, setCrossSort] = useState({ key: 'winrate', dir: 'desc' });
-
-  // 1. Filter by period
-  const filteredByPeriod = useMemo(
-    () => filterVodsByPeriod(vods, period),
-    [vods, period]
-  );
-
-  // 2. Filter by map & agent
-  const mapNames = useMemo(
-    () => uniqueSorted(filteredByPeriod.map((v) => v.map)),
-    [filteredByPeriod]
-  );
-  const agentNames = useMemo(
-    () => uniqueSorted(filteredByPeriod.map((v) => v.agent)),
-    [filteredByPeriod]
-  );
-
-  const filtered = useMemo(() => {
-    return filteredByPeriod.filter(
-      (v) =>
-        (selectedMap === 'Todos' || v.map === selectedMap) &&
-        (selectedAgent === 'Todos' || v.agent === selectedAgent)
-    );
-  }, [filteredByPeriod, selectedMap, selectedAgent]);
-
-  const currentStats = useMemo(() => calcStats(filtered), [filtered]);
-  const byMapInFilter = useMemo(
-    () => groupStats(filtered, (v) => v.map),
-    [filtered]
-  );
-  const byAgentInFilter = useMemo(
-    () => groupStats(filtered, (v) => v.agent),
-    [filtered]
-  );
-  const cross = useMemo(
-    () =>
-      groupStats(filtered, (v) =>
-        v.map && v.agent ? `${v.map} · ${v.agent}` : ''
-      ),
-    [filtered]
-  );
-
-  // Round balance
-  const roundBalanceStats = useMemo(
-    () => calcRoundBalance(filtered),
-    [filtered]
-  );
-
-  // Side & Pistol stats
-  const sideStats = useMemo(() => calcSideStats(filtered), [filtered]);
-
-  // Opening duel stats (First Kills vs First Deaths)
-  const openingDuelStats = useMemo(
-    () => calcOpeningDuelStats(filtered),
-    [filtered]
-  );
-
-  // Sort cross combinations
-  const sortedCross = useMemo(
-    () => sortCrossStats(cross, crossSort),
-    [cross, crossSort]
-  );
-
-  const toggleCrossSort = (key) => {
-    setCrossSort((prev) => ({
-      key,
-      dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc',
-    }));
-  };
-
-  const copyDiscordOverview = async () => {
-    const bestMap = getBestMap(byMapInFilter);
-    const worstMap = getWorstMap(byMapInFilter);
-    const bestAgent = getBestAgent(byAgentInFilter);
-
-    const periodLabel =
-      period === '7d'
-        ? 'Últimos 7 dias'
-        : period === '30d'
-          ? 'Últimos 30 dias'
-          : period === '90d'
-            ? 'Últimos 90 dias'
-            : 'Todo o histórico';
-
-    let text = `**KRING VLR — RELATÓRIO ESTATÍSTICO DE DESEMPENHO**\n`;
-    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `**Período:** \`${periodLabel}\` | **Partidas:** **${currentStats.matches}** (${currentStats.wins}V - ${currentStats.losses}D - ${currentStats.draws}E)\n`;
-    text += `**Winrate Geral:** \`${percent(currentStats.winrate)}\` | **K/D Médio:** \`${currentStats.kdMatches ? `${currentStats.avgKD.toFixed(2)}x` : '—'}\` | **Abates:** \`${currentStats.kills}\`\n`;
-    if (roundBalanceStats.matchesWithRounds > 0) {
-      text += `**Saldo de Rounds:** \`${roundBalanceStats.won} × ${roundBalanceStats.lost}\` (${roundBalanceStats.diff > 0 ? '+' : ''}${roundBalanceStats.diff})\n`;
-    }
-    text += `\n`;
-
-    if (bestMap) {
-      text += `⭐ **Melhor Mapa:** **${bestMap.name}** (\`${percent(bestMap.winrate)}\` · ${bestMap.wins}V - ${bestMap.losses}D)\n`;
-    }
-    if (worstMap && worstMap.name !== bestMap?.name) {
-      text += `**Atenção no Mapa:** **${worstMap.name}** (\`${percent(worstMap.winrate)}\` · ${worstMap.wins}V - ${worstMap.losses}D)\n`;
-    }
-    if (bestAgent) {
-      text += `**Agente Mais Efetivo:** **${bestAgent.name}** (\`${percent(bestAgent.winrate)}\` · ${bestAgent.wins}V - ${bestAgent.losses}D)\n`;
-    }
-
-    if (
-      sideStats.atkWR != null ||
-      sideStats.defWR != null ||
-      sideStats.pistolWR != null
-    ) {
-      text += `\n`;
-      text += `**Aproveitamento Tático por Lado:**\n`;
-      if (sideStats.atkWR != null)
-        text += `• Ataque: \`${percent(sideStats.atkWR)}\` (${sideStats.atkWon}/${sideStats.atkTotal} rounds)\n`;
-      if (sideStats.defWR != null)
-        text += `• Defesa: \`${percent(sideStats.defWR)}\` (${sideStats.defWon}/${sideStats.defTotal} rounds)\n`;
-      if (sideStats.pistolWR != null)
-        text += `• Pistols: \`${percent(sideStats.pistolWR)}\` (${sideStats.pistolWon}/${sideStats.pistolPlayed} rounds)\n`;
-    }
-
-    if (openingDuelStats.total > 0) {
-      text += `\n`;
-      text += `**Duelos de Abertura:** \`${openingDuelStats.fk} First Kills\` vs \`${openingDuelStats.fd} First Deaths\` (Saldo: \`${openingDuelStats.diff > 0 ? '+' : ''}${openingDuelStats.diff}\` | Taxa FK: \`${percent(openingDuelStats.fkRate)}\`)\n`;
-    }
-
-    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    text += `_Gerado pelo KRING Valorant Analyzer_`;
-
-    const ok = await copyToClipboard(text);
-    if (ok) {
-      if (onToast) onToast('Relatório copiado para o Discord!');
-    } else {
-      if (onToast) onToast('Erro ao copiar relatório.');
-    }
-  };
-
-  return (
-    <section>
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">DADOS DE PERFORMANCE</div>
-          <h1>Estatísticas</h1>
-          <p>
-            Encontre mapas fortes, agentes consistentes, aproveitamento de
-            rounds por lado e combinações para otimizar sua preparação.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="button button-secondary"
-          onClick={copyDiscordOverview}
-          disabled={!filtered.length}
-          title="Copiar relatório completo com indicadores para o Discord"
-        >
-          <Copy size={15} /> Copiar p/ Discord
-        </button>
-      </div>
-
-      <div className="stats-filter-panel">
-        <div className="stats-filter-intro">
-          <ListFilter size={18} />
-          <div>
-            <strong>Filtros de Análise</strong>
-            <span>
-              Selecione período, mapa ou agente para recalcular todos os
-              indicadores.
-            </span>
-          </div>
-        </div>
-
-        <div className="stats-filters">
-          <div className="field">
-            <span className="field-label">Período</span>
-            <div className="filter-chip-row" style={{ marginTop: 4 }}>
-              {[
-                { id: 'all', label: 'Todo o histórico' },
-                { id: '7d', label: 'Últimos 7 dias' },
-                { id: '30d', label: 'Últimos 30 dias' },
-                { id: '90d', label: 'Últimos 90 dias' },
-              ].map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`filter-chip ${period === p.id ? 'active' : ''}`}
-                  onClick={() => setPeriod(p.id)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <Field label="Mapa">
-            <select
-              value={selectedMap}
-              onChange={(e) => setSelectedMap(e.target.value)}
-            >
-              <option>Todos</option>
-              {mapNames.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Agente">
-            <select
-              value={selectedAgent}
-              onChange={(e) => setSelectedAgent(e.target.value)}
-            >
-              <option>Todos</option>
-              {agentNames.map((a) => (
-                <option key={a}>{a}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      </div>
-
-      <div className="stats-cards-row">
-        <MetricCard
-          icon={Video}
-          label="Partidas no filtro"
-          value={currentStats.matches}
-          detail={`${currentStats.wins}V · ${currentStats.losses}D · ${currentStats.draws}E`}
-          accent="blue"
-        />
-        <MetricCard
-          icon={Trophy}
-          label="Winrate no filtro"
-          value={percent(currentStats.winrate)}
-          detail={`${currentStats.decisions} partidas com decisão`}
-          accent="green"
-        />
-        <MetricCard
-          icon={Swords}
-          label="Abates e K/D"
-          value={
-            currentStats.kdMatches ? `${currentStats.avgKD.toFixed(2)}x` : '—'
-          }
-          detail={`Média ${currentStats.avgKills.toFixed(1)} kills/jogo · ${currentStats.kills} total`}
-          accent="purple"
-        />
-        <MetricCard
-          icon={Activity}
-          label="Saldo de Rounds"
-          value={
-            roundBalanceStats.matchesWithRounds > 0
-              ? `${roundBalanceStats.diff > 0 ? '+' : ''}${roundBalanceStats.diff}`
-              : '—'
-          }
-          detail={
-            roundBalanceStats.matchesWithRounds > 0
-              ? `${roundBalanceStats.won} ganhos × ${roundBalanceStats.lost} perdidos`
-              : 'Sem placar detalhado'
-          }
-          accent="orange"
-        />
-      </div>
-
-      {(sideStats.atkTotal > 0 ||
-        sideStats.defTotal > 0 ||
-        openingDuelStats.total > 0) && (
-        <div className="stats-tactical-grid">
-          <div className="panel tactical-stat-box">
-            <div className="panel-heading">
-              <div>
-                <h2>Aproveitamento por Lado & Pistols</h2>
-                <p>
-                  Taxa de vitória em cada metade do jogo e nos rounds de
-                  pistola.
-                </p>
-              </div>
-            </div>
-            <div className="side-balance-bars">
-              <div className="side-balance-row">
-                <div className="side-balance-header">
-                  <span>
-                    <strong>Lado Atacante:</strong> {sideStats.atkWon}/
-                    {sideStats.atkTotal} rounds
-                  </span>
-                  <strong
-                    className={
-                      sideStats.atkWR != null && sideStats.atkWR >= 50
-                        ? 'win-text'
-                        : 'loss-text'
-                    }
-                  >
-                    {sideStats.atkWR != null
-                      ? percent(sideStats.atkWR)
-                      : 'Sem dados'}
-                  </strong>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${sideStats.atkWR || 0}%`,
-                      background: 'linear-gradient(90deg, #f97316, #fb923c)',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="side-balance-row">
-                <div className="side-balance-header">
-                  <span>
-                    <strong>Lado Defensor:</strong> {sideStats.defWon}/
-                    {sideStats.defTotal} rounds
-                  </span>
-                  <strong
-                    className={
-                      sideStats.defWR != null && sideStats.defWR >= 50
-                        ? 'win-text'
-                        : 'loss-text'
-                    }
-                  >
-                    {sideStats.defWR != null
-                      ? percent(sideStats.defWR)
-                      : 'Sem dados'}
-                  </strong>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${sideStats.defWR || 0}%`,
-                      background: 'linear-gradient(90deg, #3b82f6, #60a5fa)',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="side-balance-row">
-                <div className="side-balance-header">
-                  <span>
-                    <strong>Rounds Pistol:</strong> {sideStats.pistolWon}/
-                    {sideStats.pistolPlayed} ganhos
-                  </span>
-                  <strong
-                    className={
-                      sideStats.pistolWR != null && sideStats.pistolWR >= 50
-                        ? 'win-text'
-                        : 'loss-text'
-                    }
-                  >
-                    {sideStats.pistolWR != null
-                      ? percent(sideStats.pistolWR)
-                      : 'Sem dados'}
-                  </strong>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${sideStats.pistolWR || 0}%`,
-                      background: 'linear-gradient(90deg, #10b981, #34d399)',
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="panel tactical-stat-box">
-            <div className="panel-heading">
-              <div>
-                <h2>Duelos de Abertura (First Blood)</h2>
-                <p>
-                  Equilíbrio entre primeiros abates e primeiras mortes nos
-                  rounds.
-                </p>
-              </div>
-            </div>
-            {openingDuelStats.total > 0 ? (
-              <div className="opening-duels-body">
-                <div className="opening-duels-kpi">
-                  <div className="opening-duel-stat win">
-                    <span>First Kills (FK)</span>
-                    <strong>+{openingDuelStats.fk}</strong>
-                  </div>
-                  <div className="opening-duel-stat diff">
-                    <span>Saldo de Abertura</span>
-                    <strong
-                      className={
-                        openingDuelStats.diff >= 0 ? 'win-text' : 'loss-text'
-                      }
-                    >
-                      {openingDuelStats.diff > 0 ? '+' : ''}
-                      {openingDuelStats.diff}
-                    </strong>
-                  </div>
-                  <div className="opening-duel-stat loss">
-                    <span>First Deaths (FD)</span>
-                    <strong>-{openingDuelStats.fd}</strong>
-                  </div>
-                </div>
-                <div className="opening-rate-bar">
-                  <div
-                    className="side-balance-header"
-                    style={{ marginBottom: 4 }}
-                  >
-                    <span>Taxa de Vitória no Primeiro Duelo</span>
-                    <strong
-                      className={
-                        openingDuelStats.fkRate >= 50 ? 'win-text' : 'loss-text'
-                      }
-                    >
-                      {percent(openingDuelStats.fkRate)}
-                    </strong>
-                  </div>
-                  <div className="progress-track">
-                    <div
-                      className="progress-fill"
-                      style={{
-                        width: `${openingDuelStats.fkRate || 0}%`,
-                        background: 'linear-gradient(90deg, #10b981, #34d399)',
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="panel-empty" style={{ padding: '24px 0' }}>
-                <Swords size={24} />
-                <span>
-                  Registre eventos de First Kill ou faça a review com OCR para
-                  calcular a taxa de abertura.
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="stats-analysis-grid">
-        <StatPanel
-          title="Desempenho por mapa"
-          subtitle="Winrate e volume de partidas"
-          rows={byMapInFilter}
-          empty="Não há partidas para os filtros selecionados."
-        />
-        <StatPanel
-          title="Desempenho por agente"
-          subtitle="Winrate e volume de partidas"
-          rows={byAgentInFilter}
-          empty="Não há partidas para os filtros selecionados."
-        />
-      </div>
-
-      <div className="panel cross-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Mapa + Agente</h2>
-            <p>Compare suas combinações. Clique nas colunas para ordenar.</p>
-          </div>
-          <span className="small-counter">{cross.length} combinações</span>
-        </div>
-        {sortedCross.length ? (
-          <div className="recent-table-wrap">
-            <table className="data-table stats-table">
-              <thead>
-                <tr>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('name')}
-                  >
-                    MAPA · AGENTE{' '}
-                    {crossSort.key === 'name' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('matches')}
-                  >
-                    PARTIDAS{' '}
-                    {crossSort.key === 'matches' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('wins')}
-                  >
-                    VITÓRIAS{' '}
-                    {crossSort.key === 'wins' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('losses')}
-                  >
-                    DERROTAS{' '}
-                    {crossSort.key === 'losses' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('draws')}
-                  >
-                    EMPATES{' '}
-                    {crossSort.key === 'draws' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                  <th
-                    className="sortable-th"
-                    onClick={() => toggleCrossSort('winrate')}
-                  >
-                    WINRATE{' '}
-                    {crossSort.key === 'winrate' &&
-                      (crossSort.dir === 'desc' ? '▼' : '▲')}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedCross.map((row) => (
-                  <tr key={row.name}>
-                    <td>
-                      <strong>{row.name}</strong>
-                    </td>
-                    <td>{row.matches}</td>
-                    <td className="win-text">{row.wins}</td>
-                    <td className="loss-text">{row.losses}</td>
-                    <td>{row.draws}</td>
-                    <td>
-                      <div className="table-rate">
-                        <div className="progress-track">
-                          <div
-                            className="progress-fill"
-                            style={{ width: `${row.winrate}%` }}
-                          />
-                        </div>
-                        <strong
-                          className={
-                            row.decisions && row.winrate >= 50 ? 'good' : ''
-                          }
-                        >
-                          {percent(row.winrate)}
-                        </strong>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="table-empty">
-            <BarChart3 size={20} />
-            <span>Adicione VODs para comparar mapa e agente.</span>
-          </div>
-        )}
-      </div>
-
-      <GameplanStatsPanel vods={filtered} gameplans={gameplans} />
-
-      <div className="dashboard-bottom-note">
-        <CircleHelp size={15} />
-        <span>
-          Empates não entram no denominador do winrate. Para uma leitura
-          confiável, compare também o número de partidas de cada combinação.
-        </span>
-      </div>
-    </section>
-  );
-}
-
-function GameplanStatsPanel({ vods, gameplans }) {
-  const [map, setMap] = useState('Todos');
-  const [side, setSide] = useState('Todos');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [sortKey, setSortKey] = useState('winrate');
-  const [sortDir, setSortDir] = useState('desc');
-
-  const mapOptions = uniqueSorted(gameplans.map((plan) => plan.map));
-
-  const rows = useMemo(() => {
-    return gameplans
-      .filter(
-        (plan) =>
-          (map === 'Todos' || plan.map === map) &&
-          (side === 'Todos' || plan.side === side)
-      )
-      .map((plan) => {
-        const matches = vods.filter(
-          (vod) =>
-            vod.gameplanId === plan.id &&
-            (!from || (vod.date || '') >= from) &&
-            (!to || (vod.date || '') <= to)
-        );
-        const wins = matches.filter((vod) => vod.result === 'Vitória').length;
-        const losses = matches.filter((vod) => vod.result === 'Derrota').length;
-        const draws = matches.filter((vod) => vod.result === 'Empate').length;
-        const decisions = wins + losses;
-        const scored = matches.filter(
-          (vod) =>
-            Number.isFinite(Number(vod.roundsWon)) &&
-            Number.isFinite(Number(vod.roundsLost)) &&
-            vod.roundsWon != null &&
-            vod.roundsLost != null
-        );
-        const roundsWon = scored.reduce(
-          (total, vod) => total + Number(vod.roundsWon),
-          0
-        );
-        const roundsLost = scored.reduce(
-          (total, vod) => total + Number(vod.roundsLost),
-          0
-        );
-        return {
-          ...plan,
-          matches: matches.length,
-          wins,
-          losses,
-          draws,
-          decisions,
-          winrate: decisions ? (wins / decisions) * 100 : 0,
-          roundsWon,
-          roundsLost,
-          roundBalance: scored.length ? roundsWon - roundsLost : null,
-        };
-      });
-  }, [gameplans, vods, map, side, from, to]);
-
-  const sortedRows = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      let comp = 0;
-      if (sortKey === 'name') comp = a.name.localeCompare(b.name);
-      else if (sortKey === 'matches') comp = a.matches - b.matches;
-      else if (sortKey === 'wins') comp = a.wins - b.wins;
-      else if (sortKey === 'winrate') comp = a.winrate - b.winrate;
-      else if (sortKey === 'roundBalance')
-        comp = (a.roundBalance ?? -999) - (b.roundBalance ?? -999);
-      return sortDir === 'desc' ? -comp : comp;
-    });
-  }, [rows, sortKey, sortDir]);
-
-  const toggleSort = (key) => {
-    setSortKey(key);
-    setSortDir((prev) => (sortKey === key && prev === 'desc' ? 'asc' : 'desc'));
-  };
-
-  const ranked = rows
-    .filter((row) => row.decisions > 0)
-    .sort((a, b) => b.winrate - a.winrate || b.decisions - a.decisions);
-
-  return (
-    <div className="panel cross-panel gameplan-report">
-      <div className="panel-heading">
-        <div>
-          <h2>Desempenho por Gameplan</h2>
-          <p>
-            Compare vitórias, winrate e saldo de rounds dos planos executados.
-            Clique nas colunas para ordenar.
-          </p>
-        </div>
-        <span className="small-counter">{rows.length} planos</span>
-      </div>
-
-      <div className="gameplan-report-filters">
-        <Field label="Mapa">
-          <select value={map} onChange={(e) => setMap(e.target.value)}>
-            <option>Todos</option>
-            {mapOptions.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Lado">
-          <select value={side} onChange={(e) => setSide(e.target.value)}>
-            <option>Todos</option>
-            <option>Ataque</option>
-            <option>Defesa</option>
-            <option>Ambos</option>
-          </select>
-        </Field>
-        <Field label="De">
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-          />
-        </Field>
-        <Field label="Até">
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-          />
-        </Field>
-      </div>
-
-      {ranked.length > 0 && (
-        <div className="gameplan-rankings">
-          <div>
-            <span>Maior winrate</span>
-            <strong>{ranked[0].name}</strong>
-            <small>
-              {percent(ranked[0].winrate)} · {ranked[0].decisions} partidas
-              decididas
-            </small>
-          </div>
-          <div>
-            <span>Menor winrate</span>
-            <strong>{ranked[ranked.length - 1].name}</strong>
-            <small>
-              {percent(ranked[ranked.length - 1].winrate)} ·{' '}
-              {ranked[ranked.length - 1].decisions} partidas decididas
-            </small>
-          </div>
-        </div>
-      )}
-
-      {sortedRows.length ? (
-        <div className="recent-table-wrap">
-          <table className="data-table stats-table">
-            <thead>
-              <tr>
-                <th className="sortable-th" onClick={() => toggleSort('name')}>
-                  GAMEPLAN{' '}
-                  {sortKey === 'name' && (sortDir === 'desc' ? '▼' : '▲')}
-                </th>
-                <th>MAPA · LADO</th>
-                <th
-                  className="sortable-th"
-                  onClick={() => toggleSort('matches')}
-                >
-                  PARTIDAS{' '}
-                  {sortKey === 'matches' && (sortDir === 'desc' ? '▼' : '▲')}
-                </th>
-                <th>V · D · E</th>
-                <th
-                  className="sortable-th"
-                  onClick={() => toggleSort('winrate')}
-                >
-                  WINRATE{' '}
-                  {sortKey === 'winrate' && (sortDir === 'desc' ? '▼' : '▲')}
-                </th>
-                <th>ROUNDS</th>
-                <th
-                  className="sortable-th"
-                  onClick={() => toggleSort('roundBalance')}
-                >
-                  SALDO{' '}
-                  {sortKey === 'roundBalance' &&
-                    (sortDir === 'desc' ? '▼' : '▲')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <strong>{row.name}</strong>
-                  </td>
-                  <td>
-                    {row.map} · {row.side}
-                  </td>
-                  <td>{row.matches}</td>
-                  <td>
-                    <span className="win-text">{row.wins}</span> ·{' '}
-                    <span className="loss-text">{row.losses}</span> ·{' '}
-                    {row.draws}
-                  </td>
-                  <td>
-                    <div className="table-rate">
-                      <div className="progress-track">
-                        <div
-                          className="progress-fill"
-                          style={{ width: `${row.winrate}%` }}
-                        />
-                      </div>
-                      <strong>
-                        {row.decisions ? percent(row.winrate) : '—'}
-                      </strong>
-                    </div>
-                  </td>
-                  <td>
-                    {row.roundBalance == null
-                      ? '—'
-                      : `${row.roundsWon} × ${row.roundsLost}`}
-                  </td>
-                  <td
-                    className={
-                      row.roundBalance > 0
-                        ? 'win-text'
-                        : row.roundBalance < 0
-                          ? 'loss-text'
-                          : ''
-                    }
-                  >
-                    {row.roundBalance == null
-                      ? '—'
-                      : `${row.roundBalance > 0 ? '+' : ''}${row.roundBalance}`}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="table-empty">
-          <Swords size={20} />
-          <span>Nenhum Gameplan registrado para os filtros selecionados.</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatPanel({ title, subtitle, rows, empty }) {
-  return (
-    <div className="panel stat-panel">
-      <div className="panel-heading">
-        <div>
-          <h2>{title}</h2>
-          <p>{subtitle}</p>
-        </div>
-      </div>
-      {rows.length ? (
-        <div className="stat-bars">
-          {rows.map((row) => (
-            <div className="stat-bar-row" key={row.name}>
-              <div className="stat-name-row">
-                <strong>{row.name}</strong>
-                <span>
-                  {row.wins}V · {row.losses}D
-                  {row.draws ? ` · ${row.draws}E` : ''}
-                </span>
-              </div>
-              <div className="stat-bar-bottom">
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{ width: `${row.winrate}%` }}
-                  />
-                </div>
-                <strong
-                  className={row.decisions && row.winrate >= 50 ? 'good' : ''}
-                >
-                  {percent(row.winrate)}
-                </strong>
-              </div>
-              <span className="stat-games">
-                {row.matches} {row.matches === 1 ? 'partida' : 'partidas'}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="panel-empty">
-          <BarChart3 size={22} />
-          <span>{empty}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Modal({ title, subtitle, onClose, children }) {
-  useKeyPress('Escape', onClose);
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="modal-card"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-      >
-        <div className="modal-header">
-          <div>
-            <h2 id="modal-title">{title}</h2>
-            <p>{subtitle}</p>
-          </div>
-          <button className="icon-button" aria-label="Fechar" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function InteractiveVodReviewModal({ vod, onClose, onToast, onExportMatch }) {
-  const videoRef = useRef(null);
-  const seekTimeoutRef = useRef(null);
-  const [selectedRound, setSelectedRound] = useState(0); // 0 = all
-  const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' | 'scoreboard'
-  const [playbackRate, setPlaybackRate] = useState(1.0);
-  const [activeKill, setActiveKill] = useState(null);
-  const [isMaximized, setIsMaximized] = useState(false);
-  const [scoreboardTeamFilter, setScoreboardTeamFilter] = useState('all');
-  const [jumpOffset, setJumpOffset] = useState(0); // 0 = tempo exato do abate, 3 = -3s de setup
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-
-  const videoUrl =
-    window.kringAPI?.toLocalVideoUrl && vod.localVideoPath
-      ? window.kringAPI.toLocalVideoUrl(vod.localVideoPath)
-      : '';
-
-  const analysis = vod.analysisData || {};
-  const rounds = analysis.rounds || [];
-  const allKills = analysis.all_kills || [];
-  const qualityWarnings = analysis.quality?.warnings || [];
-
-  const displayedKills =
-    selectedRound === 0
-      ? allKills
-      : rounds.find((r) => r.round_number === selectedRound)?.kills || [];
-
-  const changeSpeed = (rate) => {
-    setPlaybackRate(rate);
-    if (videoRef.current) videoRef.current.playbackRate = rate;
-  };
-
-  const seekRelative = (delta) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = Math.max(
-        0,
-        videoRef.current.currentTime + delta
-      );
-    }
-  };
-
-  const seekTo = (seconds, killItem = null) => {
-    if (killItem) setActiveKill(killItem);
-    if (!Number.isFinite(seconds)) return;
-    const targetSec = Math.max(0, seconds - jumpOffset);
-
-    // Cancel pending seek to avoid browser demuxer overload from rapid clicks
-    if (seekTimeoutRef.current) {
-      clearTimeout(seekTimeoutRef.current);
-    }
-
-    seekTimeoutRef.current = setTimeout(() => {
-      const video = videoRef.current;
-      if (!video) return;
-
-      try {
-        if (typeof video.fastSeek === 'function') {
-          video.fastSeek(targetSec);
-        } else {
-          video.currentTime = targetSec;
-        }
-
-        // Only start play if paused, to avoid Promise spamming
-        if (video.paused) {
-          const p = video.play();
-          if (p !== undefined) {
-            p.catch(() => {});
-          }
-        }
-      } catch (err) {
-        console.warn('[ReviewPlayer] Erro suave ao saltar:', err);
-      }
-    }, 30);
-  };
-
-  const copyDiscord = async () => {
-    const text = formatDiscordReport(vod);
-    const ok = await copyToClipboard(text);
-    if (ok) {
-      if (onToast)
-        onToast(
-          'Relatório copiado para a área de transferência! Cole no Discord.'
-        );
-    } else {
-      if (onToast) onToast('Não foi possível copiar o relatório.');
-    }
-  };
-
-  // Clean, normalize and cluster OCR player stats into real match participants
-  const cleanedPlayers = useMemo(() => {
-    const raw = vod.analysisData?.players_stats;
-    if (!raw || typeof raw !== 'object') return [];
-
-    const WEAPONS_AND_IGNORE = new Set([
-      'aliado',
-      'inimigo',
-      'agente',
-      'fense',
-      'defense',
-      'attack',
-      'round',
-      'match',
-      'high',
-      'medium',
-      'low',
-      'sec',
-      'vandal',
-      'phantom',
-      'sheriff',
-      'ghost',
-      'classic',
-      'spectre',
-      'operator',
-      'guardian',
-      'ares',
-      'odin',
-      'stinger',
-      'bucky',
-      'judge',
-      'marshal',
-      'outlaw',
-      'frenzy',
-      'shorty',
-      'sidearm',
-      'sheriffisidearm',
-    ]);
-
-    const candidates = [];
-    for (const [name, s] of Object.entries(raw)) {
-      if (!name || name.length < 2) continue;
-      if (
-        /^\d+$/.test(name) ||
-        /^\d+\/\d+$/.test(name) ||
-        /^\d+\.\d+$/.test(name)
-      )
-        continue;
-      const cleanLower = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (!cleanLower || cleanLower.length < 2) continue;
-      if (WEAPONS_AND_IGNORE.has(cleanLower)) continue;
-      if (cleanLower.startsWith('jogador')) continue;
-
-      candidates.push({
-        canonical: name.trim(),
-        cleanKey: cleanLower,
-        agent: s.agent && s.agent !== 'Agente' ? s.agent : '',
-        team: s.team || 'friendly',
-        kills: s.kills || 0,
-        deaths: s.deaths || 0,
-        assists: s.assists || 0,
-        scoreboard_verified: !!s.scoreboard_verified,
-        headshots: s.headshots || 0,
-        first_kills: s.first_kills || 0,
-        first_deaths: s.first_deaths || 0,
-        trade_kills: s.trade_kills || 0,
-        traded_deaths: s.traded_deaths || 0,
-        clutches_won: s.clutches_won || 0,
-        kast_pct: s.kast_pct,
-      });
-    }
-
-    // Sort by kills descending
-    candidates.sort((a, b) => b.kills - a.kills);
-
-    const clusters = [];
-    for (const cand of candidates) {
-      let matched = null;
-      for (const cl of clusters) {
-        if (cl.cleanKey === cand.cleanKey) {
-          matched = cl;
-          break;
-        }
-        const dist = levenshtein(cl.cleanKey, cand.cleanKey);
-        const minLen = Math.min(cl.cleanKey.length, cand.cleanKey.length);
-        if (dist <= 1 || (dist <= 2 && minLen >= 6)) {
-          matched = cl;
-          break;
-        }
-      }
-
-      if (matched) {
-        matched.kills += cand.kills;
-        matched.deaths += cand.deaths;
-        matched.assists = (matched.assists || 0) + (cand.assists || 0);
-        if (cand.scoreboard_verified) matched.scoreboard_verified = true;
-        matched.headshots += cand.headshots;
-        matched.first_kills += cand.first_kills;
-        matched.first_deaths += cand.first_deaths;
-        if (cand.trade_kills) matched.trade_kills = (matched.trade_kills || 0) + cand.trade_kills;
-        if (cand.traded_deaths) matched.traded_deaths = (matched.traded_deaths || 0) + cand.traded_deaths;
-        if (cand.clutches_won) matched.clutches_won = (matched.clutches_won || 0) + cand.clutches_won;
-        if (cand.kast_pct !== undefined && matched.kast_pct === undefined) matched.kast_pct = cand.kast_pct;
-        if (!matched.agent && cand.agent) matched.agent = cand.agent;
-      } else {
-        clusters.push({ ...cand });
-      }
-    }
-
-    return clusters
-      .filter((p) => p.kills + p.deaths >= 2)
-      .map((p) => ({
-        name: p.canonical,
-        agent: p.agent || 'Agente',
-        team: p.team,
-        kills: p.kills,
-        deaths: p.deaths,
-        assists: p.assists || 0,
-        scoreboard_verified: p.scoreboard_verified,
-        trade_kills: p.trade_kills || 0,
-        traded_deaths: p.traded_deaths || 0,
-        clutches_won: p.clutches_won || 0,
-        kast_pct: p.kast_pct,
-        kd_ratio:
-          p.deaths > 0 ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2),
-        headshot_rate:
-          p.kills > 0 ? ((p.headshots / p.kills) * 100).toFixed(1) : '0.0',
-        first_kills: p.first_kills,
-        first_deaths: p.first_deaths,
-      }))
-      .sort((a, b) => b.kills - a.kills);
-  }, [vod.analysisData?.players_stats]);
-
-  const filteredPlayers = useMemo(() => {
-    if (scoreboardTeamFilter === 'friendly')
-      return cleanedPlayers.filter((p) => p.team === 'friendly');
-    if (scoreboardTeamFilter === 'enemy')
-      return cleanedPlayers.filter((p) => p.team === 'enemy');
-    return cleanedPlayers;
-  }, [cleanedPlayers, scoreboardTeamFilter]);
-
-  const hasTacticalStats = useMemo(
-    () => cleanedPlayers.some((p) => p.kast_pct !== undefined),
-    [cleanedPlayers]
-  );
-
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className={`review-modal-card ${isMaximized ? 'maximized' : ''}`}
-        role="dialog"
-        aria-modal="true"
-      >
-        <header className="review-modal-header">
-          <h2>
-            <Play size={20} className="badge-team-friendly" />
-            <span>
-              Review do Treino: <strong>{vod.title}</strong>
-            </span>
-            <span className="agent-pill">{vod.map || 'Valorant'}</span>
-            <span
-              className={`result-badge ${vod.result === 'Vitória' ? 'win' : vod.result === 'Derrota' ? 'loss' : 'draw'}`}
-            >
-              {vod.result} ({vod.roundsWon ?? '—'} × {vod.roundsLost ?? '—'})
-            </span>
-          </h2>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {qualityWarnings.length > 0 && (
-              <button
-                type="button"
-                className={`button button-small ${showDiagnostics ? 'button-secondary' : 'button-ghost'}`}
-                onClick={() => setShowDiagnostics((prev) => !prev)}
-                title="Alternar visualização dos avisos técnicos de diagnóstico"
-                style={{ fontSize: '12px' }}
-              >
-                <AlertTriangle size={13} style={{ color: '#f59e0b' }} /> Diagnóstico ({qualityWarnings.length})
-              </button>
-            )}
-            {onExportMatch && (
-              <button
-                type="button"
-                className="button button-secondary button-small"
-                onClick={() => onExportMatch(vod)}
-                title="Exportar arquivo da partida (.json) para compartilhar com a equipe"
-              >
-                <ArrowUpFromLine size={14} /> Exportar Partida
-              </button>
-            )}
-            <button
-              type="button"
-              className="button button-secondary button-small"
-              onClick={copyDiscord}
-              title="Copiar relatório formatado para o Discord"
-            >
-              <ClipboardPaste size={14} /> Copiar p/ Discord
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={isMaximized ? 'Restaurar' : 'Maximizar'}
-              title={
-                isMaximized
-                  ? 'Restaurar tamanho padrão'
-                  : 'Maximizar janela (Expandir visão)'
-              }
-              onClick={() => setIsMaximized(!isMaximized)}
-            >
-              {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Fechar"
-              onClick={onClose}
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </header>
-
-        {qualityWarnings.length > 0 && showDiagnostics && (
-          <aside className="review-quality-banner" role="status" aria-label="Avisos de qualidade da análise">
-            <div
-              className="review-quality-banner-header"
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertTriangle size={16} className="quality-warning-icon" />
-                <strong>Avisos de Diagnóstico da Análise ({qualityWarnings.length})</strong>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setShowDiagnostics(false)}
-                title="Fechar avisos de diagnóstico"
-                style={{ padding: '2px 6px' }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <ul
-              className="review-quality-banner-list"
-              style={{ maxHeight: '160px', overflowY: 'auto' }}
-            >
-              {qualityWarnings.map((warning, index) => (
-                <li key={index}>{warning}</li>
-              ))}
-            </ul>
-          </aside>
-        )}
-
-        <div
-          className={`review-modal-body ${activeTab === 'scoreboard' ? 'scoreboard-active' : ''}`}
-        >
-          <div className="review-player-section">
-            <div className="review-video-wrap">
-              {videoUrl ? (
-                <video
-                  ref={videoRef}
-                  src={videoUrl}
-                  controls
-                  autoPlay
-                  playsInline
-                  onError={(e) =>
-                    console.warn('Falha na reprodução de vídeo:', e)
-                  }
-                />
-              ) : (
-                <div
-                  style={{
-                    color: '#889',
-                    textAlign: 'center',
-                    padding: '40px',
-                  }}
-                >
-                  <FileVideo2
-                    size={44}
-                    style={{ opacity: 0.6, marginBottom: '10px' }}
-                  />
-                  <p>
-                    Arquivo de vídeo local não encontrado no caminho original.
-                    <br />
-                    <small>
-                      {vod.localVideoPath || 'Sem arquivo vinculado'}
-                    </small>
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="review-video-controls">
-              <div className="video-controls-actions">
-                <button
-                  type="button"
-                  className="speed-chip"
-                  onClick={() => seekRelative(-5)}
-                  title="Voltar 5 segundos"
-                >
-                  <RotateCcw size={12} /> -5s
-                </button>
-                <button
-                  type="button"
-                  className="speed-chip"
-                  onClick={() => seekRelative(5)}
-                  title="Avançar 5 segundos"
-                >
-                  +5s
-                </button>
-                <div className="speed-group">
-                  <span className="speed-label">Velocidade:</span>
-                  {[0.5, 0.75, 1.0, 1.25, 1.5].map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      className={`speed-chip ${playbackRate === s ? 'active' : ''}`}
-                      onClick={() => changeSpeed(s)}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
-                <div
-                  className="speed-group"
-                  title="Modo de salto ao clicar nos abates"
-                >
-                  <span className="speed-label">Salto:</span>
-                  <button
-                    type="button"
-                    className={`speed-chip ${jumpOffset === 0 ? 'active' : ''}`}
-                    onClick={() => setJumpOffset(0)}
-                    title="Ir exatamente no segundo do abate registrado"
-                  >
-                    Exato (0s)
-                  </button>
-                  <button
-                    type="button"
-                    className={`speed-chip ${jumpOffset === 3 ? 'active' : ''}`}
-                    onClick={() => setJumpOffset(3)}
-                    title="Pular 3 segundos antes do abate (preparação do tiro)"
-                  >
-                    -3s
-                  </button>
-                  <button
-                    type="button"
-                    className={`speed-chip ${jumpOffset === 5 ? 'active' : ''}`}
-                    onClick={() => setJumpOffset(5)}
-                    title="Pular 5 segundos antes do abate"
-                  >
-                    -5s
-                  </button>
-                </div>
-              </div>
-              <div className="video-controls-info">
-                <span>
-                  <Clock
-                    size={13}
-                    style={{ verticalAlign: 'middle', marginRight: '4px' }}
-                  />
-                  {jumpOffset === 0
-                    ? 'Clique no abate para ir ao momento exato'
-                    : `Salto com ${jumpOffset}s de pré-lance`}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="review-timeline-section">
-            <div className="review-tabs">
-              <button
-                className={`review-tab-btn ${activeTab === 'timeline' ? 'active' : ''}`}
-                onClick={() => setActiveTab('timeline')}
-              >
-                <Target
-                  size={14}
-                  style={{ verticalAlign: 'middle', marginRight: '4px' }}
-                />{' '}
-                Timeline de Abates ({displayedKills.length})
-              </button>
-              <button
-                className={`review-tab-btn ${activeTab === 'scoreboard' ? 'active' : ''}`}
-                onClick={() => setActiveTab('scoreboard')}
-              >
-                <BarChart3
-                  size={14}
-                  style={{ verticalAlign: 'middle', marginRight: '4px' }}
-                />{' '}
-                Placar do Treino ({cleanedPlayers.length} jogadores)
-              </button>
-            </div>
-
-            {activeTab === 'timeline' ? (
-              <>
-                <div className="rounds-chip-grid">
-                  <button
-                    className={`round-chip ${selectedRound === 0 ? 'selected' : ''}`}
-                    onClick={() => setSelectedRound(0)}
-                  >
-                    Todos ({rounds.length} rounds)
-                  </button>
-                  {rounds.map((r) => (
-                    <button
-                      key={r.round_number}
-                      className={`round-chip ${r.winner === 'friendly' ? 'won' : 'lost'} ${selectedRound === r.round_number ? 'selected' : ''}`}
-                      onClick={() => {
-                        setSelectedRound(r.round_number);
-                        if (r.start_time)
-                          seekTo(parseTimeToSeconds(r.start_time));
-                      }}
-                    >
-                      {r.clutch ? '' : ''}R{r.round_number} (
-                      {r.score_after || (r.winner === 'friendly' ? 'V' : 'D')})
-                    </button>
-                  ))}
-                </div>
-
-                {selectedRound > 0 && (() => {
-                  const curRound = rounds.find((r) => r.round_number === selectedRound);
-                  if (!curRound) return null;
-                  return (
-                    <div
-                      className="review-round-header"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '10px 14px',
-                        marginBottom: '12px',
-                        background: 'rgba(255, 255, 255, 0.04)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '6px',
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, color: '#f1f5f9', fontSize: '13px' }}>
-                        Round {curRound.round_number} ({curRound.score_after || (curRound.winner === 'friendly' ? 'Vitória' : 'Derrota')})
-                      </span>
-                      {curRound.clutch && (
-                        <span
-                          className="badge badge-clutch"
-                          title={`Clutch 1v${curRound.clutch.vs_count} vencido por ${curRound.clutch.player}`}
-                          style={{
-                            background: 'linear-gradient(135deg, #ea580c, #dc2626)',
-                            color: '#ffffff',
-                            padding: '3px 10px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: '700',
-                            letterSpacing: '0.04em',
-                            boxShadow: '0 2px 8px rgba(234, 88, 12, 0.35)',
-                          }}
-                        >
-                          CLUTCH {curRound.clutch.label} ({curRound.clutch.player})
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                <div className="review-events-list">
-                  {displayedKills.length === 0 ? (
-                    <div
-                      style={{
-                        color: '#778',
-                        textAlign: 'center',
-                        padding: '30px',
-                      }}
-                    >
-                      Nenhum abate registrado para este filtro.
-                    </div>
-                  ) : (
-                    displayedKills.map((k, i) => (
-                      <div
-                        key={i}
-                        className={`review-event-card ${activeKill === k ? 'active-playing' : ''}`}
-                        onClick={() =>
-                          seekTo(
-                            k.timestamp_sec ?? parseTimeToSeconds(k.time),
-                            k
-                          )
-                        }
-                        title="Clique para ir para este lance no vídeo"
-                      >
-                        <div className="review-event-left">
-                          <span className="review-time-badge">{k.time}</span>
-                          <div className="kill-player-unit">
-                            <span className={`badge-team-${k.killer_team}`}>
-                              {k.killer}
-                            </span>
-                            {k.killer_agent && (
-                              <span className="agent-tag">
-                                {k.killer_agent}
-                              </span>
-                            )}
-                          </div>
-                          <span style={{ color: '#556' }}>➔</span>
-                          <div className="kill-player-unit">
-                            <span className={`badge-team-${k.victim_team}`}>
-                              {k.victim}
-                            </span>
-                            {k.victim_agent && (
-                              <span className="agent-tag">
-                                {k.victim_agent}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            gap: '6px',
-                            alignItems: 'center',
-                          }}
-                        >
-                          {k.headshot && (
-                            <span
-                              className="kill-tag-hs"
-                              title="Eliminação por Tiro na Cabeça"
-                            >
-                              <Crosshair size={10} /> HS
-                            </span>
-                          )}
-                          {k.first_kill && (
-                            <span
-                              className="kill-tag-fk"
-                              title="Primeiro Abate da Rodada"
-                            >
-                              <Zap size={10} /> 1st Kill
-                            </span>
-                          )}
-                          {k.is_trade_kill && (
-                            <span
-                              className="kill-tag-trade"
-                              title={`Trade Kill! Vingou ${k.traded_teammate || 'aliado'}${k.trade_delta_sec != null ? ` em ${k.trade_delta_sec}s` : ''}`}
-                              style={{
-                                background: 'rgba(234, 179, 8, 0.18)',
-                                border: '1px solid rgba(234, 179, 8, 0.5)',
-                                color: '#facc15',
-                                padding: '2px 7px',
-                                borderRadius: '4px',
-                                fontSize: '10px',
-                                fontWeight: '700',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                              }}
-                            >
-                              TRADE
-                            </span>
-                          )}
-                          <Play
-                            size={13}
-                            style={{
-                              color: activeKill === k ? '#38bdf8' : '#65aaff',
-                              opacity: activeKill === k ? 1 : 0.8,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="review-scoreboard-wrap">
-                <div className="scoreboard-filter-bar">
-                  <div className="rounds-chip-grid" style={{ marginBottom: 0 }}>
-                    <button
-                      type="button"
-                      className={`round-chip ${scoreboardTeamFilter === 'all' ? 'selected' : ''}`}
-                      onClick={() => setScoreboardTeamFilter('all')}
-                    >
-                      Todos ({cleanedPlayers.length})
-                    </button>
-                    <button
-                      type="button"
-                      className={`round-chip ${scoreboardTeamFilter === 'friendly' ? 'selected won' : ''}`}
-                      onClick={() => setScoreboardTeamFilter('friendly')}
-                    >
-                      Aliados (
-                      {
-                        cleanedPlayers.filter((p) => p.team === 'friendly')
-                          .length
-                      }
-                      )
-                    </button>
-                    <button
-                      type="button"
-                      className={`round-chip ${scoreboardTeamFilter === 'enemy' ? 'selected lost' : ''}`}
-                      onClick={() => setScoreboardTeamFilter('enemy')}
-                    >
-                      Inimigos (
-                      {cleanedPlayers.filter((p) => p.team === 'enemy').length})
-                    </button>
-                  </div>
-                </div>
-
-                {analysis.tactical_summary && (
-                  <div
-                    className="tactical-summary-banner"
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '14px',
-                      padding: '10px 14px',
-                      marginBottom: '12px',
-                      background: 'rgba(56, 189, 248, 0.06)',
-                      border: '1px solid rgba(56, 189, 248, 0.2)',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span style={{ fontWeight: 700, color: '#38bdf8' }}>MÉTRICAS TÁTICAS:</span>
-                    {analysis.tactical_summary.first_blood_conversion?.friendly && (
-                      <span style={{ color: '#cbd5e1' }}>
-                        <strong>5v4 Win Rate:</strong>{' '}
-                        <span style={{ color: '#34d399', fontWeight: 600 }}>
-                          {analysis.tactical_summary.first_blood_conversion.friendly.rate}%
-                        </span>{' '}
-                        ({analysis.tactical_summary.first_blood_conversion.friendly.fb_rounds_won}/{analysis.tactical_summary.first_blood_conversion.friendly.fb_rounds_total})
-                      </span>
-                    )}
-                    {analysis.tactical_summary.man_disadvantage_recovery?.friendly && (
-                      <span style={{ color: '#cbd5e1' }}>
-                        <strong>4v5 Viradas:</strong>{' '}
-                        <span style={{ color: '#fbbf24', fontWeight: 600 }}>
-                          {analysis.tactical_summary.man_disadvantage_recovery.friendly.rate}%
-                        </span>{' '}
-                        ({analysis.tactical_summary.man_disadvantage_recovery.friendly.recovery_rounds_won}/{analysis.tactical_summary.man_disadvantage_recovery.friendly.recovery_rounds_total})
-                      </span>
-                    )}
-                    {analysis.tactical_summary.team_trade_efficiency?.friendly && (
-                      <span style={{ color: '#cbd5e1' }}>
-                        <strong>Eficiência de Trades:</strong>{' '}
-                        <span style={{ color: '#60a5fa', fontWeight: 600 }}>
-                          {analysis.tactical_summary.team_trade_efficiency.friendly.rate}%
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                <div className="scoreboard-table-container">
-                  <table className="review-scoreboard-table">
-                    <thead>
-                      <tr>
-                        <th>JOGADOR</th>
-                        <th>AGENTE</th>
-                        <th>TIME</th>
-                        <th className="col-center">ABATES</th>
-                        <th className="col-center">MORTES</th>
-                        <th className="col-center">ASSISTÊNCIAS</th>
-                        <th className="col-center">K/D</th>
-                        <th className="col-center">HS %</th>
-                        <th className="col-center">1st KILL</th>
-                        <th className="col-center">1st DEATH</th>
-                        {hasTacticalStats && (
-                          <>
-                            <th className="col-center">KAST %</th>
-                            <th className="col-center">TRADES</th>
-                            <th className="col-center">CLUTCH</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPlayers.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={hasTacticalStats ? 13 : 10}
-                            style={{
-                              textAlign: 'center',
-                              padding: '30px',
-                              color: '#778',
-                            }}
-                          >
-                            Nenhum jogador encontrado para este filtro.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredPlayers.map((s, idx) => (
-                          <tr key={s.name}>
-                            <td>
-                              <strong>{s.name}</strong>
-                              {s.scoreboard_verified && (
-                                <span
-                                  title="Verificado e sincronizado com o Scoreboard Oficial (100% precisão)"
-                                  style={{
-                                    marginLeft: 6,
-                                    fontSize: '0.72rem',
-                                    color: '#38bdf8',
-                                    background: 'rgba(56, 189, 248, 0.12)',
-                                    padding: '1px 5px',
-                                    borderRadius: 4,
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  Placar
-                                </span>
-                              )}
-                              {idx === 0 && scoreboardTeamFilter === 'all' && (
-                                <span className="mvp-badge">
-                                  <Trophy size={10} /> MVP
-                                </span>
-                              )}
-                            </td>
-                            <td>
-                              <span className="agent-tag">
-                                {s.agent || '—'}
-                              </span>
-                            </td>
-                            <td>
-                              <span className={`badge-team-${s.team}`}>
-                                {s.team === 'friendly' ? 'Aliado' : 'Inimigo'}
-                              </span>
-                            </td>
-                            <td
-                              className="col-center"
-                              style={{ color: '#54d6a2', fontWeight: 700 }}
-                            >
-                              {s.kills}
-                            </td>
-                            <td
-                              className="col-center"
-                              style={{ color: '#ff6c83' }}
-                            >
-                              {s.deaths}
-                            </td>
-                            <td
-                              className="col-center"
-                              style={{ color: '#93c5fd', fontWeight: 600 }}
-                            >
-                              {s.assists}
-                            </td>
-                            <td className="col-center">
-                              <span
-                                className={`kd-badge ${Number(s.kd_ratio) >= 1.5 ? 'kd-high' : Number(s.kd_ratio) >= 1.0 ? 'kd-mid' : 'kd-low'}`}
-                              >
-                                {s.kd_ratio}x
-                              </span>
-                            </td>
-                            <td className="col-center">
-                              <span className="kill-tag-hs">
-                                {s.headshot_rate}%
-                              </span>
-                            </td>
-                            <td className="col-center">{s.first_kills}</td>
-                            <td
-                              className="col-center"
-                              style={{ color: '#94a3b8' }}
-                            >
-                              {s.first_deaths}
-                            </td>
-                            {hasTacticalStats && (
-                              <>
-                                <td
-                                  className="col-center"
-                                  style={{ color: '#38bdf8', fontWeight: 600 }}
-                                >
-                                  {s.kast_pct !== undefined ? `${s.kast_pct}%` : '—'}
-                                </td>
-                                <td
-                                  className="col-center"
-                                  style={{ color: '#facc15' }}
-                                >
-                                  {s.trade_kills || 0}/{s.traded_deaths || 0}
-                                </td>
-                                <td
-                                  className="col-center"
-                                  style={{ color: '#fb923c', fontWeight: 600 }}
-                                >
-                                  {s.clutches_won > 0 ? `${s.clutches_won}` : '0'}
-                                </td>
-                              </>
-                            )}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 

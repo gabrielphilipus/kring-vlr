@@ -101,3 +101,15 @@ export function cleanNick(value) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * Retorna os valores únicos não vazios ordenados segundo pt-BR.
+ *
+ * @param {Array<string|null|undefined>} values
+ * @returns {string[]}
+ */
+export function uniqueSorted(values) {
+  return Array.from(new Set((values || []).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, 'pt-BR')
+  );
+}
+

@@ -144,6 +144,7 @@ class ValorantAnalyzer:
         self.tmpl_enemy = cv2.imread(os.path.join(templates_dir, "hs_enemy.png"))
         self.ocr = None
         self.ocr_error = None
+        self.ocr_provider = None
         if RAPID_OCR_AVAILABLE:
             # 1. Try DirectML GPU acceleration first
             try:
@@ -152,10 +153,14 @@ class ValorantAnalyzer:
                 dummy_img = np.zeros((32, 32, 3), dtype=np.uint8)
                 test_ocr(dummy_img)
                 self.ocr = test_ocr
+                self.ocr_provider = "DirectML"
+                print("[analyzer] Motor OCR inicializado com aceleração GPU (DirectML).", flush=True)
             except Exception:
                 # 2. Fall back to CPU inference if DirectML fails on this GPU/driver
                 try:
                     self.ocr = RapidOCR(det_use_dml=False, cls_use_dml=False, rec_use_dml=False)
+                    self.ocr_provider = "CPU"
+                    print("[analyzer] Motor OCR inicializado em modo CPU.", flush=True)
                 except Exception as cpu_err:
                     self.ocr = None
                     self.ocr_error = str(cpu_err)
@@ -892,7 +897,7 @@ class ValorantAnalyzer:
 
         h, w = frame.shape[:2]
         t_crop = frame[int(0.02 * h) : int(0.08 * h), int(0.46 * w) : int(0.54 * w)]
-        res_t, _ = self.ocr(t_crop)
+        res_t, _ = self.ocr(t_crop, use_cls=False)
         timer_txt = ""
         if res_t:
             for r in res_t:
@@ -905,29 +910,9 @@ class ValorantAnalyzer:
         if timer_txt.startswith("1:"):
             return False, True
 
-        # Se timer mostra 0:xx ou decimal de contagem regressiva
+        # Se timer mostra 0:xx ou decimal de contagem regressiva (somente atingível quando not round_in_combat)
         if timer_txt.startswith("0:") or ("." in timer_txt and len(timer_txt) <= 5):
-            c_crop = frame[int(0.10 * h) : int(0.24 * h), int(0.35 * w) : int(0.65 * w)]
-            res_c, _ = self.ocr(c_crop)
-            c_txts = " ".join(r[1].upper() for r in (res_c or []))
-            if any(
-                w in c_txts
-                for w in [
-                    "BUY",
-                    "COMPRA",
-                    "DEFENDER",
-                    "ATTACKER",
-                    "ROUND",
-                    "BULLDOG",
-                    "VANDAL",
-                    "PHANTOM",
-                    "SHIELD",
-                    "ARMOR",
-                ]
-            ):
-                return True, False
-            if not round_in_combat:
-                return True, False
+            return True, False
 
         # Fallback nos primeiros 20 segundos se ainda não detectou início de combate
         if not round_in_combat and elapsed_in_round < 20.0:
@@ -1144,10 +1129,13 @@ class ValorantAnalyzer:
         duplicates_filtered_count = 0
         deaths_capacity_exceeded_count = 0
 
-        current_frame_idx = 0
+        current_frame_idx = max(0, int(gameplay_start_sec * fps))
+        if current_frame_idx < frames_to_process:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
         last_progress_emit = 0
         current_round_start_time = gameplay_start_sec
         round_in_combat = False
+        buy_phase_until_sec = -1.0
         last_hud_gray = None
         last_hud_ocr_time = -999.0
         last_kf_gray = None
@@ -1156,7 +1144,6 @@ class ValorantAnalyzer:
         match_end_sec = None
 
         while current_frame_idx < frames_to_process:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
             ret, frame = cap.read()
             if not ret:
                 break
@@ -1167,19 +1154,38 @@ class ValorantAnalyzer:
             # Clean up deduplication cache older than DEFAULT_KILL_PRUNE_AGE_SEC
             recent_kills = prune_recent_kills(recent_kills, current_time_sec, max_age_sec=DEFAULT_KILL_PRUNE_AGE_SEC)
 
-            # 1. Analyze Top HUD (Score & Round) with Smart Pixel Difference Cache
+            # 1. Analyze Top HUD (Score & Round) with Smart Score-Zone Difference Cache
             if current_time_sec >= gameplay_start_sec and self.ocr:
                 hx, hy, hw, hh = hud_roi
                 hud_crop = frame[hy:hy+hh, hx:hx+hw]
                 hud_gray = cv2.cvtColor(hud_crop, cv2.COLOR_BGR2GRAY)
-                hud_diff = float(np.mean(cv2.absdiff(hud_gray, last_hud_gray))) if last_hud_gray is not None else 999.0
+                score_l_end = min(hud_gray.shape[1], int(140 * scale_x))
+                score_r_start = min(hud_gray.shape[1], int(240 * scale_x))
+                score_zones_gray = np.concatenate(
+                    (hud_gray[:, :score_l_end], hud_gray[:, score_r_start:]),
+                    axis=1,
+                )
+                hud_diff = (
+                    float(np.mean(cv2.absdiff(score_zones_gray, last_hud_gray)))
+                    if last_hud_gray is not None and last_hud_gray.shape == score_zones_gray.shape
+                    else 999.0
+                )
 
-                # Only run OCR when HUD visibly changes (score update / round end) or periodic heartbeat (15s)
-                if hud_diff > 2.0 or (current_time_sec - last_hud_ocr_time > 15.0):
-                    last_hud_gray = hud_gray
+                # Run HUD OCR once after rollover (~5s), near round end decisions (>=28s on score-zone diff + 6s throttle), or 15s heartbeat
+                elapsed_in_round_hud = current_time_sec - current_round_start_time
+                need_initial_sync = elapsed_in_round_hud >= 5.0 and last_hud_ocr_time < (current_round_start_time + 5.0)
+                need_transition_poll = (
+                    elapsed_in_round_hud >= 28.0
+                    and hud_diff > 2.5
+                    and (current_time_sec - last_hud_ocr_time) >= 6.0
+                )
+                need_heartbeat = (current_time_sec - last_hud_ocr_time) >= 15.0
+
+                if need_initial_sync or need_transition_poll or need_heartbeat:
+                    last_hud_gray = score_zones_gray
                     last_hud_ocr_time = current_time_sec
 
-                    hud_res, _ = self.ocr(hud_crop)
+                    hud_res, _ = self.ocr(hud_crop, use_cls=False)
                     if hud_res:
                         if debug_reads is not None:
                             for r in hud_res:
@@ -1235,6 +1241,7 @@ class ValorantAnalyzer:
                                     team_death_capacity_bonus = {"friendly": 0, "enemy": 0}
                                     round_has_first_kill = False
                                     round_in_combat = False
+                                    buy_phase_until_sec = -1.0
                                     if rounds:
                                         rounds[-1]["score_after"] = f"{detected_friendly}-{detected_enemy}"
                                         rounds[-1]["winner"] = winner
@@ -1291,6 +1298,7 @@ class ValorantAnalyzer:
                                     team_death_capacity_bonus = {"friendly": 0, "enemy": 0}
                                     current_round_start_time = current_time_sec
                                     round_in_combat = False
+                                    buy_phase_until_sec = -1.0
                                     last_hud_sync_round_count = len(rounds)
 
             # 2. Analyze Killfeed (Only after gameplay has started and OUTSIDE Buy Phase!)
@@ -1322,15 +1330,22 @@ class ValorantAnalyzer:
                     max_slot_diff = 999.0
 
                 if has_kill_banner and (kf_diff > 1.5 or max_slot_diff > 3.5 or last_kf_gray is None):
-                    # Verifica fase de compra dinamicamente pelo HUD antes de processar o killfeed
+                    # Verifica fase de compra dinamicamente pelo HUD antes de processar o killfeed (com cache de 3s)
                     elapsed_in_round = current_time_sec - current_round_start_time
-                    is_buy_phase, round_in_combat = self.is_hud_in_buy_phase(
-                        frame=frame,
-                        scale_x=scale_x,
-                        scale_y=scale_y,
-                        elapsed_in_round=elapsed_in_round,
-                        round_in_combat=round_in_combat,
-                    )
+                    if current_time_sec < buy_phase_until_sec and not round_in_combat:
+                        is_buy_phase = True
+                    else:
+                        is_buy_phase, round_in_combat = self.is_hud_in_buy_phase(
+                            frame=frame,
+                            scale_x=scale_x,
+                            scale_y=scale_y,
+                            elapsed_in_round=elapsed_in_round,
+                            round_in_combat=round_in_combat,
+                        )
+                        if is_buy_phase:
+                            buy_phase_until_sec = current_time_sec + 3.0
+                        else:
+                            buy_phase_until_sec = -1.0
                     if is_buy_phase:
                         self.record_rejection_candidate(
                             reason="fase_de_compra",
@@ -1866,12 +1881,12 @@ class ValorantAnalyzer:
             # 3. Detect End of Match Screen (Victory / Defeat banner in screen center)
             # Active after round 12 has concluded or total score >= 12
             if (current_score_friendly + current_score_enemy >= 12) and current_time_sec >= gameplay_start_sec and self.ocr:
-                if (current_time_sec - last_banner_check_time) >= 2.0:
+                if (current_time_sec - last_banner_check_time) >= 5.0:
                     last_banner_check_time = current_time_sec
                     cy1, cy2 = int(220 * scale_y), int(460 * scale_y)
                     cx1, cx2 = int(350 * scale_x), int(930 * scale_x)
                     center_crop = frame[cy1:cy2, cx1:cx2]
-                    center_res, _ = self.ocr(center_crop)
+                    center_res, _ = self.ocr(center_crop, use_cls=False)
                     if center_res:
                         match_finished = False
                         for item in center_res:
@@ -1900,6 +1915,9 @@ class ValorantAnalyzer:
                 }), flush=True)
                 last_progress_emit = time.time()
 
+            for _ in range(frame_step - 1):
+                if not cap.grab():
+                    break
             current_frame_idx += frame_step
 
         # Wrap up final round
@@ -2083,6 +2101,7 @@ class ValorantAnalyzer:
             "video_path": video_path,
             "map": detected_map,
             "duration": format_time(duration_to_process),
+            "ocr_provider": self.ocr_provider,
             "final_score": final_score,
             "rounds_count": len(rounds),
             "rounds": rounds,

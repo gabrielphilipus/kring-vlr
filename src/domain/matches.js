@@ -1,6 +1,199 @@
+import { MATCH_TYPES, REVIEW_NOTE_TAGS } from '../constants/game.js';
+import { formatSeconds, parseTimeToSeconds } from '../utils/formatters.js';
 import { stripUtf8Bom, uid } from '../utils/string.js';
+import { normalizeSide } from './stats.js';
 
 export const MATCH_SCHEMA_VERSION = 'kring-match-v1';
+
+/**
+ * Normaliza o tipo de partida para um dos valores canônicos de MATCH_TYPES.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function normalizeMatchType(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  const match = MATCH_TYPES.find(
+    (t) => t.toLowerCase() === trimmed.toLowerCase()
+  );
+  return match || '';
+}
+
+/**
+ * Indica se o nome de autor/vítima de um abate veio do OCR sem identificação real.
+ *
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isGenericKillName(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return true;
+  return /^(aliado|inimigo|agente|jogador|unknown|desconhecido)(\s+\d+|\s*\([^)]*\))?$/i.test(
+    trimmed
+  );
+}
+
+function isSameKillEvent(k, ref) {
+  if (!k || !ref) return false;
+  if (k === ref) return true;
+  return (
+    (k.round ?? null) === (ref.round ?? null) &&
+    (k.timestamp_sec ?? null) === (ref.timestamp_sec ?? null) &&
+    String(k.time || '') === String(ref.time || '') &&
+    String(k.killer || '') === String(ref.killer || '') &&
+    String(k.victim || '') === String(ref.victim || '')
+  );
+}
+
+function resolveAgentFromStats(playersStats, playerName) {
+  if (!playersStats || typeof playersStats !== 'object' || !playerName) {
+    return '';
+  }
+  const trimmed = String(playerName).trim();
+  if (!trimmed) return '';
+  const exact = playersStats[trimmed];
+  if (exact && typeof exact.agent === 'string' && exact.agent !== 'Agente') {
+    return exact.agent;
+  }
+  const lower = trimmed.toLowerCase();
+  for (const [key, stat] of Object.entries(playersStats)) {
+    if (
+      key.trim().toLowerCase() === lower &&
+      stat &&
+      typeof stat.agent === 'string' &&
+      stat.agent !== 'Agente'
+    ) {
+      return stat.agent;
+    }
+  }
+  return '';
+}
+
+/**
+ * Aplica correção manual de autor, vítima ou headshot em um abate específico,
+ * sincronizando `all_kills` e `rounds[].kills` de forma imutável sem alterar `players_stats`.
+ *
+ * @param {Object} analysisData
+ * @param {Object} killRef
+ * @param {Object} updates
+ * @returns {Object}
+ */
+export function applyKillCorrection(analysisData, killRef, updates = {}) {
+  if (!analysisData || typeof analysisData !== 'object' || !killRef) {
+    return analysisData;
+  }
+
+  const playersStats = analysisData.players_stats;
+
+  const patchKill = (k) => {
+    const nextKiller =
+      updates.killer !== undefined && String(updates.killer).trim()
+        ? String(updates.killer).trim()
+        : k.killer;
+    const nextVictim =
+      updates.victim !== undefined && String(updates.victim).trim()
+        ? String(updates.victim).trim()
+        : k.victim;
+    const killerChanged = nextKiller !== k.killer;
+    const victimChanged = nextVictim !== k.victim;
+    const nextKillerAgent = killerChanged
+      ? resolveAgentFromStats(playersStats, nextKiller)
+      : k.killer_agent;
+    const nextVictimAgent = victimChanged
+      ? resolveAgentFromStats(playersStats, nextVictim)
+      : k.victim_agent;
+
+    return {
+      ...k,
+      killer: nextKiller,
+      victim: nextVictim,
+      killer_agent: nextKillerAgent,
+      victim_agent: nextVictimAgent,
+      headshot:
+        typeof updates.headshot === 'boolean' ? updates.headshot : k.headshot,
+      manually_corrected: true,
+    };
+  };
+
+  let allKillsChanged = false;
+  const nextAllKills = Array.isArray(analysisData.all_kills)
+    ? analysisData.all_kills.map((k) => {
+        if (!allKillsChanged && isSameKillEvent(k, killRef)) {
+          allKillsChanged = true;
+          return patchKill(k);
+        }
+        return k;
+      })
+    : analysisData.all_kills;
+
+  let roundKillChanged = false;
+  const nextRounds = Array.isArray(analysisData.rounds)
+    ? analysisData.rounds.map((r) => {
+        if (roundKillChanged || !Array.isArray(r?.kills)) return r;
+        const idx = r.kills.findIndex((k) => isSameKillEvent(k, killRef));
+        if (idx === -1) return r;
+        roundKillChanged = true;
+        return {
+          ...r,
+          kills: r.kills.map((k, i) => (i === idx ? patchKill(k) : k)),
+        };
+      })
+    : analysisData.rounds;
+
+  if (!allKillsChanged && !roundKillChanged) {
+    return analysisData;
+  }
+
+  return {
+    ...analysisData,
+    all_kills: nextAllKills,
+    rounds: nextRounds,
+  };
+}
+
+/**
+ * Normaliza e ordena cronologicamente as marcações/anotações com timestamp de um review.
+ *
+ * @param {Array} rawNotes
+ * @returns {Array}
+ */
+export function normalizeReviewNotes(rawNotes = []) {
+  if (!Array.isArray(rawNotes)) return [];
+  const validTags = new Map(
+    REVIEW_NOTE_TAGS.map((t) => [t.toLowerCase(), t])
+  );
+
+  return rawNotes
+    .filter((n) => n && typeof n === 'object' && String(n.text || '').trim())
+    .map((n) => {
+      const rawSec =
+        n.timestampSec !== null &&
+        n.timestampSec !== undefined &&
+        n.timestampSec !== '' &&
+        Number.isFinite(Number(n.timestampSec))
+          ? Number(n.timestampSec)
+          : parseTimeToSeconds(n.time);
+      const timestampSec = Math.max(0, Math.round(rawSec * 10) / 10);
+      const rawRound = Number(n.round);
+      const round =
+        Number.isFinite(rawRound) && rawRound >= 1 ? Math.floor(rawRound) : null;
+      const rawTag = String(n.tag || '').trim();
+      const tag =
+        validTags.get(rawTag.toLowerCase()) || rawTag || 'Geral';
+
+      return {
+        id: (n.id && String(n.id).trim()) || uid(),
+        timestampSec,
+        time: formatSeconds(timestampSec),
+        round,
+        tag,
+        text: String(n.text).trim(),
+        createdAt: n.createdAt || new Date().toISOString(),
+      };
+    })
+    .sort((a, b) => a.timestampSec - b.timestampSec);
+}
 
 /**
  * Cria o payload JSON padronizado para exportação de uma partida / scrim individual.
@@ -28,6 +221,9 @@ export function createMatchExportPayload(vod) {
       agent: (vod.agent || '').trim(),
       date: (vod.date || '').trim(),
       result: vod.result || 'Vitória',
+      matchType: normalizeMatchType(vod.matchType),
+      opponent: String(vod.opponent || '').trim(),
+      startingSide: normalizeSide(vod.startingSide) || '',
       roundsWon: typeof vod.roundsWon === 'number' ? vod.roundsWon : null,
       roundsLost: typeof vod.roundsLost === 'number' ? vod.roundsLost : null,
       kills: Math.max(0, Number(vod.kills) || 0),
@@ -48,6 +244,7 @@ export function createMatchExportPayload(vod) {
           }
         : { Ataque: {}, Defesa: {} },
       notes: (vod.notes || '').trim(),
+      reviewNotes: normalizeReviewNotes(vod.reviewNotes),
       gamePlan: (vod.gamePlan || '').trim(),
       link: (vod.link || '').trim(),
       tacticalSummary,
@@ -143,6 +340,9 @@ export function createMatchImportRecord(matchData) {
     agentId: matchData.agentId || null,
     date: (matchData.date || new Date().toISOString().split('T')[0]).trim(),
     result: matchData.result || 'Vitória',
+    matchType: normalizeMatchType(matchData.matchType),
+    opponent: String(matchData.opponent || '').trim(),
+    startingSide: normalizeSide(matchData.startingSide) || '',
     roundsWon: typeof matchData.roundsWon === 'number' ? matchData.roundsWon : null,
     roundsLost: typeof matchData.roundsLost === 'number' ? matchData.roundsLost : null,
     kills: Math.max(0, Number(matchData.kills) || 0),
@@ -151,6 +351,7 @@ export function createMatchImportRecord(matchData) {
     openingDuels: Array.isArray(matchData.openingDuels) ? matchData.openingDuels : [],
     roundResults: matchData.roundResults || { Ataque: {}, Defesa: {} },
     notes: (matchData.notes || '').trim(),
+    reviewNotes: normalizeReviewNotes(matchData.reviewNotes),
     gamePlan: (matchData.gamePlan || '').trim(),
     link: (matchData.link || '').trim(),
     tacticalSummary,

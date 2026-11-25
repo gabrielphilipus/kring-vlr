@@ -1,4 +1,5 @@
 import { toLocalDateString } from '../utils/formatters.js';
+import { cleanNick } from '../utils/string.js';
 
 export function calcStats(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
@@ -90,6 +91,17 @@ export function normalizeSide(side) {
   return null;
 }
 
+export function inferRoundSide(roundNumber, startingSide) {
+  const start = normalizeSide(startingSide);
+  const num = Number(roundNumber);
+  if (!start || !Number.isFinite(num) || num < 1) return null;
+  const r = Math.floor(num);
+  const other = start === 'Ataque' ? 'Defesa' : 'Ataque';
+  if (r <= 12) return start;
+  if (r <= 24) return other;
+  return (r - 25) % 2 === 0 ? start : other;
+}
+
 export function calcSideStats(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   let atkWon = 0;
@@ -99,33 +111,38 @@ export function calcSideStats(rows = []) {
   let pistolWon = 0;
   let pistolPlayed = 0;
 
+  const isWinVal = (res) => res === 'Vitória' || res === 'Ganhamos';
+  const isLossVal = (res) => res === 'Derrota' || res === 'Perdemos';
+
   list.forEach((vod) => {
     const atk = vod?.roundResults?.Ataque || {};
     const def = vod?.roundResults?.Defesa || {};
     const hasManualRounds =
-      Object.keys(atk).length > 0 || Object.keys(def).length > 0;
+      Object.values(atk).some(Boolean) || Object.values(def).some(Boolean);
 
     if (hasManualRounds) {
       Object.entries(atk).forEach(([roundType, res]) => {
-        if (res === 'Vitória') atkWon++;
-        else if (res === 'Derrota') atkLost++;
+        if (isWinVal(res)) atkWon++;
+        else if (isLossVal(res)) atkLost++;
         if (roundType.toLowerCase().includes('pistol')) {
           pistolPlayed++;
-          if (res === 'Vitória') pistolWon++;
+          if (isWinVal(res)) pistolWon++;
         }
       });
       Object.entries(def).forEach(([roundType, res]) => {
-        if (res === 'Vitória') defWon++;
-        else if (res === 'Derrota') defLost++;
+        if (isWinVal(res)) defWon++;
+        else if (isLossVal(res)) defLost++;
         if (roundType.toLowerCase().includes('pistol')) {
           pistolPlayed++;
-          if (res === 'Vitória') pistolWon++;
+          if (isWinVal(res)) pistolWon++;
         }
       });
     } else if (Array.isArray(vod?.analysisData?.rounds)) {
+      const vodStartSide = normalizeSide(vod?.startingSide);
       vod.analysisData.rounds.forEach((r) => {
         const isFriendly = r.winner === 'friendly';
-        const side = normalizeSide(r.side);
+        const side =
+          normalizeSide(r.side) || inferRoundSide(r.round_number, vodStartSide);
         if (side === 'Ataque') {
           if (isFriendly) atkWon++;
           else atkLost++;
@@ -245,5 +262,235 @@ export function getBestAgent(agentsStats = []) {
       .sort((a, b) => b.winrate - a.winrate || b.decisions - a.decisions)[0] ||
     null
   );
+}
+
+const GENERIC_PLAYER_KEYS = new Set(['aliado', 'inimigo', 'agente', 'jogador']);
+
+export function calcTacticalAggregateStats(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  let matchesWithTactics = 0;
+  let fbWon = 0;
+  let fbTotal = 0;
+  let recoveryWon = 0;
+  let recoveryTotal = 0;
+  let tradedDeaths = 0;
+  let totalDeaths = 0;
+  let clutchesWon = 0;
+  const clutchesByLabel = {};
+  const clutches = [];
+  let kastSum = 0;
+  let kastSamples = 0;
+
+  const playersMap = new Map();
+  const byMapAccum = new Map();
+
+  list.forEach((vod) => {
+    const tactical =
+      vod?.analysisData?.tactical_summary ||
+      vod?.tacticalSummary ||
+      vod?.tactical_summary ||
+      null;
+    if (!tactical || typeof tactical !== 'object') return;
+
+    matchesWithTactics += 1;
+
+    const fb = tactical.first_blood_conversion?.friendly;
+    const mFbWon = Number(fb?.fb_rounds_won) || 0;
+    const mFbTotal = Number(fb?.fb_rounds_total) || 0;
+    fbWon += mFbWon;
+    fbTotal += mFbTotal;
+
+    const rec = tactical.man_disadvantage_recovery?.friendly;
+    const mRecWon = Number(rec?.recovery_rounds_won) || 0;
+    const mRecTotal = Number(rec?.recovery_rounds_total) || 0;
+    recoveryWon += mRecWon;
+    recoveryTotal += mRecTotal;
+
+    const trade = tactical.team_trade_efficiency?.friendly;
+    const mTraded = Number(trade?.traded_deaths) || 0;
+    const mDeaths = Number(trade?.total_deaths) || 0;
+    tradedDeaths += mTraded;
+    totalDeaths += mDeaths;
+
+    const vodClutches = Array.isArray(tactical.clutches)
+      ? tactical.clutches.filter((c) => c && c.team === 'friendly')
+      : [];
+    clutchesWon += vodClutches.length;
+    vodClutches.forEach((c) => {
+      const label = c.label || `1v${c.vs_count || 1}`;
+      clutchesByLabel[label] = (clutchesByLabel[label] || 0) + 1;
+      clutches.push({
+        map: vod.map || '',
+        date: vod.date || '',
+        round: c.round,
+        label,
+        player: c.player || '',
+      });
+    });
+
+    // Lookup scoreboard stats by normalized nick for kills/deaths/assists enrichment
+    const sbLookup = new Map();
+    const rawSb = vod?.analysisData?.players_stats;
+    if (rawSb && typeof rawSb === 'object') {
+      Object.entries(rawSb).forEach(([sbName, sbVal]) => {
+        const key = cleanNick(sbName);
+        if (key && sbVal && typeof sbVal === 'object') {
+          sbLookup.set(key, sbVal);
+        }
+      });
+    }
+
+    let mapKastSum = 0;
+    let mapKastSamples = 0;
+
+    const rawPlayerTact = tactical.player_tactical_stats;
+    if (rawPlayerTact && typeof rawPlayerTact === 'object') {
+      Object.entries(rawPlayerTact).forEach(([pName, pStats]) => {
+        if (!pStats || typeof pStats !== 'object') return;
+        if (pStats.team !== 'friendly') return;
+        const key = cleanNick(pStats.player || pName);
+        if (!key || GENERIC_PLAYER_KEYS.has(key)) return;
+
+        const kastVal = Number(pStats.kast_pct);
+        const hasKast =
+          pStats.kast_pct !== null &&
+          pStats.kast_pct !== undefined &&
+          Number.isFinite(kastVal);
+        if (hasKast) {
+          kastSum += kastVal;
+          kastSamples += 1;
+          mapKastSum += kastVal;
+          mapKastSamples += 1;
+        }
+
+        if (!playersMap.has(key)) {
+          playersMap.set(key, {
+            name: (pStats.player || pName).trim(),
+            matches: 0,
+            kastSum: 0,
+            kastSamples: 0,
+            tradeKills: 0,
+            tradedDeaths: 0,
+            untradedDeaths: 0,
+            clutchesWon: 0,
+            kills: 0,
+            deaths: 0,
+            assists: 0,
+          });
+        }
+
+        const acc = playersMap.get(key);
+        acc.matches += 1;
+        if (hasKast) {
+          acc.kastSum += kastVal;
+          acc.kastSamples += 1;
+        }
+        acc.tradeKills += Number(pStats.trade_kills) || 0;
+        acc.tradedDeaths += Number(pStats.traded_deaths) || 0;
+        acc.untradedDeaths += Number(pStats.untraded_deaths) || 0;
+        acc.clutchesWon += Number(pStats.clutches_won) || 0;
+
+        const sb = sbLookup.get(key);
+        if (sb && sb.team === 'friendly') {
+          acc.kills += Number(sb.kills) || 0;
+          acc.deaths += Number(sb.deaths) || 0;
+          acc.assists += Number(sb.assists) || 0;
+        }
+      });
+    }
+
+    const mapName = (vod?.map || '').trim();
+    if (mapName) {
+      if (!byMapAccum.has(mapName)) {
+        byMapAccum.set(mapName, {
+          map: mapName,
+          matches: 0,
+          fbWon: 0,
+          fbTotal: 0,
+          recoveryWon: 0,
+          recoveryTotal: 0,
+          tradedDeaths: 0,
+          totalDeaths: 0,
+          clutchesWon: 0,
+          kastSum: 0,
+          kastSamples: 0,
+        });
+      }
+      const mAcc = byMapAccum.get(mapName);
+      mAcc.matches += 1;
+      mAcc.fbWon += mFbWon;
+      mAcc.fbTotal += mFbTotal;
+      mAcc.recoveryWon += mRecWon;
+      mAcc.recoveryTotal += mRecTotal;
+      mAcc.tradedDeaths += mTraded;
+      mAcc.totalDeaths += mDeaths;
+      mAcc.clutchesWon += vodClutches.length;
+      mAcc.kastSum += mapKastSum;
+      mAcc.kastSamples += mapKastSamples;
+    }
+  });
+
+  const players = Array.from(playersMap.values())
+    .map((p) => ({
+      name: p.name,
+      matches: p.matches,
+      avgKast: p.kastSamples ? p.kastSum / p.kastSamples : null,
+      tradeKills: p.tradeKills,
+      tradedDeaths: p.tradedDeaths,
+      untradedDeaths: p.untradedDeaths,
+      clutchesWon: p.clutchesWon,
+      kills: p.kills,
+      deaths: p.deaths,
+      assists: p.assists,
+      kdRatio: p.deaths > 0 ? p.kills / p.deaths : p.kills,
+    }))
+    .sort(
+      (a, b) =>
+        b.matches - a.matches || (b.avgKast ?? -1) - (a.avgKast ?? -1)
+    );
+
+  const byMap = Array.from(byMapAccum.values())
+    .map((m) => ({
+      map: m.map,
+      matches: m.matches,
+      fbWon: m.fbWon,
+      fbTotal: m.fbTotal,
+      fbConversionRate: m.fbTotal > 0 ? (m.fbWon / m.fbTotal) * 100 : null,
+      recoveryWon: m.recoveryWon,
+      recoveryTotal: m.recoveryTotal,
+      recoveryRate:
+        m.recoveryTotal > 0 ? (m.recoveryWon / m.recoveryTotal) * 100 : null,
+      tradedDeaths: m.tradedDeaths,
+      totalDeaths: m.totalDeaths,
+      tradeEfficiencyRate:
+        m.totalDeaths > 0 ? (m.tradedDeaths / m.totalDeaths) * 100 : null,
+      clutchesWon: m.clutchesWon,
+      avgKast: m.kastSamples ? m.kastSum / m.kastSamples : null,
+    }))
+    .sort(
+      (a, b) =>
+        b.matches - a.matches ||
+        (b.fbConversionRate ?? -1) - (a.fbConversionRate ?? -1)
+    );
+
+  return {
+    matchesWithTactics,
+    fbWon,
+    fbTotal,
+    fbConversionRate: fbTotal > 0 ? (fbWon / fbTotal) * 100 : null,
+    recoveryWon,
+    recoveryTotal,
+    recoveryRate: recoveryTotal > 0 ? (recoveryWon / recoveryTotal) * 100 : null,
+    tradedDeaths,
+    totalDeaths,
+    tradeEfficiencyRate:
+      totalDeaths > 0 ? (tradedDeaths / totalDeaths) * 100 : null,
+    teamAvgKast: kastSamples > 0 ? kastSum / kastSamples : null,
+    clutchesWon,
+    clutchesByLabel,
+    clutches,
+    players,
+    byMap,
+  };
 }
 

@@ -19,7 +19,7 @@ VALORANT_AGENTS = [
     "Fade", "Chamber", "Waylay", "Omen", "Sage", "Jett", "Sova", "Breach",
     "Killjoy", "Cypher", "Raze", "Reyna", "Phoenix", "Yoru", "Neon", "Iso",
     "Brimstone", "Viper", "Astra", "Harbor", "Clove", "Skye", "KAY/O", "Gekko",
-    "Deadlock", "Vyse", "Tejo"
+    "Deadlock", "Vyse", "Tejo", "Veto"
 ]
 
 IGNORE_WORDS = {
