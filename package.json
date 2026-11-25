@@ -4,7 +4,7 @@
   "description": "Painel pessoal de VODs, lineups e estat\u00edsticas para Valorant",
   "main": "electron/main.cjs",
   "author": "Kring",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": ">=20.0.0 <25.0.0"
