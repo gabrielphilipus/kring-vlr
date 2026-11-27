@@ -2,6 +2,7 @@ const {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
   shell,
   dialog,
   protocol,
@@ -1245,6 +1246,7 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
+    Menu.setApplicationMenu(null);
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   } else {
     mainWindow.loadURL('http://127.0.0.1:5173');
@@ -1486,7 +1488,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('updater:quit-and-install', () => {
-    if (autoUpdater) autoUpdater.quitAndInstall(true, true);
+    if (autoUpdater) autoUpdater.quitAndInstall(false, true);
   });
 
   ipcMain.handle('app:version', () => app.getVersion());

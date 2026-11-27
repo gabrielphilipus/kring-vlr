@@ -153,6 +153,135 @@ export function applyKillCorrection(analysisData, killRef, updates = {}) {
 }
 
 /**
+ * Adiciona manualmente um abate na timeline (`all_kills` e na rodada correspondente)
+ * mantendo `players_stats` intacto.
+ *
+ * @param {Object} analysisData
+ * @param {Object} killInput
+ * @returns {Object}
+ */
+export function addManualKill(analysisData, killInput = {}) {
+  const base =
+    analysisData && typeof analysisData === 'object' ? analysisData : {};
+  const killer = String(killInput.killer || '').trim();
+  const victim = String(killInput.victim || '').trim();
+  if (!killer || !victim) {
+    return analysisData;
+  }
+
+  const rawSec =
+    killInput.timestamp_sec !== null &&
+    killInput.timestamp_sec !== undefined &&
+    killInput.timestamp_sec !== '' &&
+    Number.isFinite(Number(killInput.timestamp_sec))
+      ? Number(killInput.timestamp_sec)
+      : parseTimeToSeconds(killInput.time);
+  const timestampSec = Math.max(0, Math.round(rawSec * 10) / 10);
+  const rawRound = Number(killInput.round);
+  const round =
+    Number.isFinite(rawRound) && rawRound >= 1 ? Math.floor(rawRound) : null;
+  const killerTeam =
+    killInput.killer_team === 'enemy' ? 'enemy' : 'friendly';
+  const victimTeam =
+    killInput.victim_team === 'friendly' || killInput.victim_team === 'enemy'
+      ? killInput.victim_team
+      : killerTeam === 'friendly'
+        ? 'enemy'
+        : 'friendly';
+
+  const playersStats = base.players_stats;
+  const entry = {
+    round,
+    time: formatSeconds(timestampSec),
+    timestamp_sec: timestampSec,
+    killer,
+    killer_team: killerTeam,
+    killer_agent: resolveAgentFromStats(playersStats, killer),
+    victim,
+    victim_team: victimTeam,
+    victim_agent: resolveAgentFromStats(playersStats, victim),
+    headshot: Boolean(killInput.headshot),
+    first_kill: false,
+    manually_added: true,
+  };
+
+  const sortByTime = (list) =>
+    list
+      .slice()
+      .sort(
+        (a, b) =>
+          (Number(a?.timestamp_sec) || 0) - (Number(b?.timestamp_sec) || 0)
+      );
+
+  const prevAllKills = Array.isArray(base.all_kills) ? base.all_kills : [];
+  const nextAllKills = sortByTime([...prevAllKills, entry]);
+
+  const prevRounds = Array.isArray(base.rounds) ? base.rounds : [];
+  const nextRounds = prevRounds.map((r) => {
+    if (round !== null && r?.round_number === round) {
+      const rKills = Array.isArray(r.kills) ? r.kills : [];
+      return { ...r, kills: sortByTime([...rKills, entry]) };
+    }
+    return r;
+  });
+
+  return {
+    ...base,
+    all_kills: nextAllKills,
+    rounds: nextRounds,
+  };
+}
+
+/**
+ * Remove um abate específico (p. ex. falso positivo do OCR) de `all_kills` e `rounds[].kills`,
+ * preservando `players_stats` intacto.
+ *
+ * @param {Object} analysisData
+ * @param {Object} killRef
+ * @returns {Object}
+ */
+export function removeKillEvent(analysisData, killRef) {
+  if (!analysisData || typeof analysisData !== 'object' || !killRef) {
+    return analysisData;
+  }
+
+  let removedFromAll = false;
+  const nextAllKills = Array.isArray(analysisData.all_kills)
+    ? analysisData.all_kills.filter((k) => {
+        if (!removedFromAll && isSameKillEvent(k, killRef)) {
+          removedFromAll = true;
+          return false;
+        }
+        return true;
+      })
+    : analysisData.all_kills;
+
+  let removedFromRound = false;
+  const nextRounds = Array.isArray(analysisData.rounds)
+    ? analysisData.rounds.map((r) => {
+        if (removedFromRound || !Array.isArray(r?.kills)) return r;
+        const idx = r.kills.findIndex((k) => isSameKillEvent(k, killRef));
+        if (idx === -1) return r;
+        removedFromRound = true;
+        return {
+          ...r,
+          kills: r.kills.filter((_, i) => i !== idx),
+        };
+      })
+    : analysisData.rounds;
+
+  if (!removedFromAll && !removedFromRound) {
+    return analysisData;
+  }
+
+  return {
+    ...analysisData,
+    all_kills: nextAllKills,
+    rounds: nextRounds,
+  };
+}
+
+/**
  * Normaliza e ordena cronologicamente as marcações/anotações com timestamp de um review.
  *
  * @param {Array} rawNotes

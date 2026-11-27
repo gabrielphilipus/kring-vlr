@@ -744,18 +744,32 @@ def locate_killfeed_plaque_and_hs_window(
             best_killer_team = "enemy"
             best_lg, best_le, best_rg, best_re = lg, le, rg, re
 
-    min_plaque_px = max(10, int(55 * scale_x * scale_y))
+    min_plaque_px = max(10, int(220 * scale_x * scale_y))
+    lx1_band = max(x_offset + int(55 * scale_x), best_xb - int(85 * scale_x))
+    rx2_band = min(w, best_xb + int(65 * scale_x))
+    min_col_height = max(4, int(8 * scale_y))
+    min_left_cols = max(6, int(18 * scale_x))
+    min_right_cols = max(6, int(14 * scale_x))
+
     if best_killer_team == "friendly":
+        left_solid_cols = int(np.sum(np.sum(r_green[:, lx1_band:best_xb], axis=0) >= min_col_height))
+        right_solid_cols = int(np.sum(np.sum(r_enemy[:, best_xb:rx2_band], axis=0) >= min_col_height))
         has_opposite_plaques = (
             (best_lg >= min_plaque_px)
             and (best_re >= min_plaque_px)
+            and (left_solid_cols >= min_left_cols)
+            and (right_solid_cols >= min_right_cols)
             and (best_lg > best_le * 1.35)
             and (best_re > best_rg * 1.35)
         )
     else:
+        left_solid_cols = int(np.sum(np.sum(r_enemy[:, lx1_band:best_xb], axis=0) >= min_col_height))
+        right_solid_cols = int(np.sum(np.sum(r_green[:, best_xb:rx2_band], axis=0) >= min_col_height))
         has_opposite_plaques = (
             (best_le >= min_plaque_px)
             and (best_rg >= min_plaque_px)
+            and (left_solid_cols >= min_left_cols)
+            and (right_solid_cols >= min_right_cols)
             and (best_le > best_lg * 1.35)
             and (best_rg > best_re * 1.35)
         )

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   cascadeRenameCatalogItem,
   isCatalogItemInUse,
@@ -154,29 +154,75 @@ export function useAppData({ onToast } = {}) {
     };
   }, [onToast]);
 
+  const latestDataRef = useRef(data);
+  const saveTimerRef = useRef(null);
+  const dirtySaveRef = useRef(false);
+
+  useEffect(() => {
+    latestDataRef.current = data;
+  }, [data]);
+
+  const flushSaveNow = useCallback(async () => {
+    if (!canTriggerAutoSave(ready, dataLoadError) || !dirtySaveRef.current) {
+      return;
+    }
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    dirtySaveRef.current = false;
+    const snapshot = latestDataRef.current;
+    try {
+      if (window.kringAPI?.saveData) {
+        await window.kringAPI.saveData(snapshot);
+      } else {
+        localStorage.setItem('kring-vlr-data', JSON.stringify(snapshot));
+      }
+    } catch (error) {
+      dirtySaveRef.current = true;
+      console.error(error);
+      if (onToast) {
+        onToast(
+          'Falha ao salvar. Faça uma cópia de segurança dos seus dados.'
+        );
+      }
+    }
+  }, [ready, dataLoadError, onToast]);
+
   // 2. Salvamento automático com debounce de 500ms
   useEffect(() => {
     if (!canTriggerAutoSave(ready, dataLoadError)) return undefined;
 
-    const timer = window.setTimeout(async () => {
-      try {
-        if (window.kringAPI?.saveData) {
-          await window.kringAPI.saveData(data);
-        } else {
-          localStorage.setItem('kring-vlr-data', JSON.stringify(data));
-        }
-      } catch (error) {
-        console.error(error);
-        if (onToast) {
-          onToast(
-            'Falha ao salvar. Faça uma cópia de segurança dos seus dados.'
-          );
-        }
-      }
+    dirtySaveRef.current = true;
+    saveTimerRef.current = window.setTimeout(() => {
+      flushSaveNow();
     }, 500);
 
-    return () => window.clearTimeout(timer);
-  }, [ready, dataLoadError, data, onToast]);
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [ready, dataLoadError, data, flushSaveNow]);
+
+  // 2b. Descarrega salvamento pendente imediatamente ao trocar de janela (Alt+Tab) ou fechar
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushSaveNow();
+      }
+    };
+    const handleBeforeUnload = () => {
+      flushSaveNow();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [flushSaveNow]);
 
   // 3. Ações de modificação do estado (usando sempre setData(prev => ...) sem closure de data)
   const startFromScratch = () => {

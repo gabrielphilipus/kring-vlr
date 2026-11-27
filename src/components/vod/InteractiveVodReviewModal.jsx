@@ -41,6 +41,8 @@ export function InteractiveVodReviewModal({
   onUpdateStartingSide,
   onUpdateReviewNotes,
   onUpdateKill,
+  onAddKill,
+  onDeleteKill,
 }) {
   const videoRef = useRef(null);
   const seekTimeoutRef = useRef(null);
@@ -62,6 +64,15 @@ export function InteractiveVodReviewModal({
   const [editVictimSelect, setEditVictimSelect] = useState('');
   const [editVictimCustom, setEditVictimCustom] = useState('');
   const [editHeadshot, setEditHeadshot] = useState(false);
+  const [addingKill, setAddingKill] = useState(false);
+  const [addKillTime, setAddKillTime] = useState('00:00');
+  const [addKillRound, setAddKillRound] = useState('');
+  const [addKillerTeam, setAddKillerTeam] = useState('friendly');
+  const [addKillerSelect, setAddKillerSelect] = useState('__custom__');
+  const [addKillerCustom, setAddKillerCustom] = useState('');
+  const [addVictimSelect, setAddVictimSelect] = useState('__custom__');
+  const [addVictimCustom, setAddVictimCustom] = useState('');
+  const [addHeadshot, setAddHeadshot] = useState(false);
   const [noteTagFilter, setNoteTagFilter] = useState('Todas');
   const [noteFormOpen, setNoteFormOpen] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState(null);
@@ -362,6 +373,30 @@ export function InteractiveVodReviewModal({
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (editingKill) {
+          event.preventDefault();
+          setEditingKill(null);
+          return;
+        }
+        if (addingKill) {
+          event.preventDefault();
+          setAddingKill(false);
+          return;
+        }
+        if (noteFormOpen) {
+          event.preventDefault();
+          setNoteFormOpen(false);
+          return;
+        }
+        const escTargetTag = event.target?.tagName || '';
+        if (
+          escTargetTag === 'INPUT' ||
+          escTargetTag === 'TEXTAREA' ||
+          escTargetTag === 'SELECT' ||
+          event.target?.isContentEditable
+        ) {
+          return;
+        }
         onClose();
         return;
       }
@@ -403,6 +438,9 @@ export function InteractiveVodReviewModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    addingKill,
+    editingKill,
+    noteFormOpen,
     onClose,
     openNewNoteAtCurrentTime,
     seekRelative,
@@ -660,13 +698,67 @@ export function InteractiveVodReviewModal({
     setEditingKill(null);
   };
 
+  const openAddKillForm = () => {
+    if (addingKill) {
+      setAddingKill(false);
+      return;
+    }
+    const videoTime = videoRef.current?.currentTime;
+    const baseSec =
+      Number.isFinite(videoTime) && videoTime > 0
+        ? videoTime
+        : (activeKill?.timestamp_sec ?? 0);
+    const inferred = inferRoundAtTime(baseSec);
+    setEditingKill(null);
+    setAddKillTime(formatSeconds(baseSec));
+    setAddKillRound(inferred ? String(inferred) : '1');
+    setAddKillerTeam('friendly');
+    const friendlyOpts = getKillCandidates('friendly', '');
+    const enemyOpts = getKillCandidates('enemy', '');
+    setAddKillerSelect(friendlyOpts[0] || '__custom__');
+    setAddKillerCustom('');
+    setAddVictimSelect(enemyOpts[0] || '__custom__');
+    setAddVictimCustom('');
+    setAddHeadshot(false);
+    setAddingKill(true);
+  };
+
+  const handleSaveNewKill = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const resolvedKiller = (
+      addKillerSelect === '__custom__' ? addKillerCustom : addKillerSelect
+    ).trim();
+    const resolvedVictim = (
+      addVictimSelect === '__custom__' ? addVictimCustom : addVictimSelect
+    ).trim();
+    if (!resolvedKiller || !resolvedVictim) {
+      if (onToast) onToast('Informe autor e vítima do abate antes de adicionar.');
+      return;
+    }
+    const sec = parseTimeToSeconds(addKillTime);
+    const roundNum = Number(addKillRound);
+    const victimTeam = addKillerTeam === 'friendly' ? 'enemy' : 'friendly';
+    if (onAddKill) {
+      onAddKill(vod.id, {
+        round:
+          Number.isFinite(roundNum) && roundNum >= 1
+            ? Math.floor(roundNum)
+            : null,
+        timestamp_sec: sec,
+        time: formatSeconds(sec),
+        killer: resolvedKiller,
+        killer_team: addKillerTeam,
+        victim: resolvedVictim,
+        victim_team: victimTeam,
+        headshot: addHeadshot,
+      });
+    }
+    setAddingKill(false);
+  };
+
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <div className="modal-backdrop">
       <div
         className={`review-modal-card ${isMaximized ? 'maximized' : ''}`}
         role="dialog"
@@ -1134,7 +1226,143 @@ export function InteractiveVodReviewModal({
                       Limpar
                     </button>
                   )}
+                  {onAddKill && (
+                    <button
+                      type="button"
+                      className={`speed-chip ${addingKill ? 'active' : ''}`}
+                      onClick={openAddKillForm}
+                      title="Adicionar abate perdido manualmente no instante atual do vídeo"
+                    >
+                      <Plus size={12} /> Abate
+                    </button>
+                  )}
                 </div>
+
+                {addingKill && onAddKill && (
+                  <form
+                    className="review-kill-add-form"
+                    onSubmit={handleSaveNewKill}
+                  >
+                    <div className="review-kill-add-grid">
+                      <div className="review-note-mini-field">
+                        <span>Tempo</span>
+                        <input
+                          aria-label="Tempo do abate"
+                          value={addKillTime}
+                          onChange={(e) => setAddKillTime(e.target.value)}
+                          placeholder="00:00"
+                        />
+                      </div>
+                      <div className="review-note-mini-field">
+                        <span>Round</span>
+                        <input
+                          type="number"
+                          min="1"
+                          aria-label="Round do abate"
+                          value={addKillRound}
+                          onChange={(e) => setAddKillRound(e.target.value)}
+                          placeholder="1"
+                        />
+                      </div>
+                      <div className="review-note-mini-field">
+                        <span>Time do autor</span>
+                        <select
+                          aria-label="Time do autor"
+                          value={addKillerTeam}
+                          onChange={(e) => {
+                            const nextTeam = e.target.value;
+                            setAddKillerTeam(nextTeam);
+                            const kOpts = getKillCandidates(nextTeam, '');
+                            const vOpts = getKillCandidates(
+                              nextTeam === 'friendly' ? 'enemy' : 'friendly',
+                              ''
+                            );
+                            setAddKillerSelect(kOpts[0] || '__custom__');
+                            setAddVictimSelect(vOpts[0] || '__custom__');
+                          }}
+                        >
+                          <option value="friendly">Aliado</option>
+                          <option value="enemy">Inimigo</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="review-kill-edit-row">
+                      <div className="review-note-mini-field">
+                        <span>Autor do abate</span>
+                        <select
+                          aria-label="Autor do novo abate"
+                          value={addKillerSelect}
+                          onChange={(e) => setAddKillerSelect(e.target.value)}
+                        >
+                          {getKillCandidates(addKillerTeam, '').map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                          <option value="__custom__">Outro (digitar)...</option>
+                        </select>
+                        {addKillerSelect === '__custom__' && (
+                          <input
+                            aria-label="Nick personalizado do autor"
+                            value={addKillerCustom}
+                            onChange={(e) => setAddKillerCustom(e.target.value)}
+                            placeholder="Nick do autor..."
+                          />
+                        )}
+                      </div>
+                      <div className="review-note-mini-field">
+                        <span>Vítima</span>
+                        <select
+                          aria-label="Vítima do novo abate"
+                          value={addVictimSelect}
+                          onChange={(e) => setAddVictimSelect(e.target.value)}
+                        >
+                          {getKillCandidates(
+                            addKillerTeam === 'friendly' ? 'enemy' : 'friendly',
+                            ''
+                          ).map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                          <option value="__custom__">Outro (digitar)...</option>
+                        </select>
+                        {addVictimSelect === '__custom__' && (
+                          <input
+                            aria-label="Nick personalizado da vítima"
+                            value={addVictimCustom}
+                            onChange={(e) => setAddVictimCustom(e.target.value)}
+                            placeholder="Nick da vítima..."
+                          />
+                        )}
+                      </div>
+                      <label className="review-kill-hs-toggle">
+                        <input
+                          type="checkbox"
+                          aria-label="Headshot no novo abate"
+                          checked={addHeadshot}
+                          onChange={(e) => setAddHeadshot(e.target.checked)}
+                        />
+                        <span>HS</span>
+                      </label>
+                    </div>
+                    <div className="review-kill-edit-actions">
+                      <button
+                        type="button"
+                        className="button button-quiet button-small"
+                        onClick={() => setAddingKill(false)}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        className="button button-primary button-small"
+                      >
+                        <Check size={13} /> Adicionar abate
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 <div className="review-events-list">
                   {displayedKills.length === 0 ? (
@@ -1213,12 +1441,16 @@ export function InteractiveVodReviewModal({
                                   Genérico
                                 </span>
                               )}
-                              {k.manually_corrected && (
+                              {(k.manually_corrected || k.manually_added) && (
                                 <span
                                   className="kill-tag-manual"
-                                  title="Abate corrigido manualmente"
+                                  title={
+                                    k.manually_added
+                                      ? 'Abate adicionado manualmente'
+                                      : 'Abate corrigido manualmente'
+                                  }
                                 >
-                                  Editado
+                                  {k.manually_added ? 'Manual' : 'Editado'}
                                 </span>
                               )}
                               {k.headshot && (
@@ -1269,6 +1501,22 @@ export function InteractiveVodReviewModal({
                                   }}
                                 >
                                   <Pencil size={13} />
+                                </button>
+                              )}
+                              {onDeleteKill && (
+                                <button
+                                  type="button"
+                                  className="icon-button danger review-kill-delete-btn"
+                                  aria-label="Excluir abate"
+                                  title="Remover este abate da timeline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (editingKill === k) setEditingKill(null);
+                                    if (activeKill === k) setActiveKill(null);
+                                    onDeleteKill(vod.id, k);
+                                  }}
+                                >
+                                  <Trash2 size={13} />
                                 </button>
                               )}
                               <Play

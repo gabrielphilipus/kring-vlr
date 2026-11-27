@@ -79,12 +79,14 @@ import {
 } from './domain/stats.js';
 import { formatDiscordReport } from './domain/discord.js';
 import {
+  addManualKill,
   applyKillCorrection,
   createMatchExportPayload,
   validateAndParseMatchJson,
   createMatchImportRecord,
   getMatchExportFilename,
   normalizeMatchType,
+  removeKillEvent,
 } from './domain/matches.js';
 
 function App() {
@@ -97,6 +99,7 @@ function App() {
   const [clearVodsModal, setClearVodsModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
+  const [formDirty, setFormDirty] = useState(false);
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({
     map: 'Todos',
@@ -110,7 +113,7 @@ function App() {
   );
   const [updateInfo, setUpdateInfo] = useState(null);
   const [appVersion, setAppVersion] = useState(
-    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.0'
+    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.1'
   );
   const imageInputRef = useRef(null);
 
@@ -261,6 +264,7 @@ function App() {
 
   const openCreate = (kind, map = '') => {
     setEditingId(null);
+    setFormDirty(false);
     setDetectedRoster(null);
     setManualNickMode(false);
     setForm(
@@ -346,6 +350,7 @@ function App() {
 
   const openEdit = (kind, entry) => {
     setEditingId(entry.id);
+    setFormDirty(false);
     setDetectedRoster(null);
     setManualNickMode(false);
     setForm({
@@ -368,13 +373,26 @@ function App() {
   const closeModal = () => {
     setModal(null);
     setEditingId(null);
+    setFormDirty(false);
     setImageBusy(false);
     setDetectedRoster(null);
     setManualNickMode(false);
   };
 
-  const updateForm = (key, value) =>
+  const requestCloseModal = () => {
+    if (
+      formDirty &&
+      !window.confirm('Você tem alterações não salvas. Deseja fechar e descartar?')
+    ) {
+      return;
+    }
+    closeModal();
+  };
+
+  const updateForm = (key, value) => {
+    setFormDirty(true);
     setForm((previous) => ({ ...previous, [key]: value }));
+  };
 
   const [reviewVod, setReviewVod] = useState(null);
   const [detectingRoster, setDetectingRoster] = useState(false);
@@ -651,6 +669,7 @@ function App() {
           }
         }
 
+        setFormDirty(true);
         setForm((prev) => ({
           ...prev,
           map: match.map || prev.map,
@@ -1274,6 +1293,52 @@ function App() {
         : prev
     );
     setToast('Abate corrigido na timeline!');
+  };
+
+  const handleAddVodKill = (vodId, killInput) => {
+    setData((previous) => ({
+      ...previous,
+      vods: previous.vods.map((v) =>
+        v.id === vodId
+          ? {
+              ...v,
+              analysisData: addManualKill(v.analysisData, killInput),
+            }
+          : v
+      ),
+    }));
+    setReviewVod((prev) =>
+      prev && prev.id === vodId
+        ? {
+            ...prev,
+            analysisData: addManualKill(prev.analysisData, killInput),
+          }
+        : prev
+    );
+    setToast('Abate adicionado à timeline!');
+  };
+
+  const handleDeleteVodKill = (vodId, killRef) => {
+    setData((previous) => ({
+      ...previous,
+      vods: previous.vods.map((v) =>
+        v.id === vodId
+          ? {
+              ...v,
+              analysisData: removeKillEvent(v.analysisData, killRef),
+            }
+          : v
+      ),
+    }));
+    setReviewVod((prev) =>
+      prev && prev.id === vodId
+        ? {
+            ...prev,
+            analysisData: removeKillEvent(prev.analysisData, killRef),
+          }
+        : prev
+    );
+    setToast('Abate removido da timeline.');
   };
 
   const handleExportMatch = (vod) => {
@@ -2106,7 +2171,8 @@ function App() {
                   ? 'Atualize o catálogo usado pelos seletores do app.'
                   : 'Adicione os detalhes para consultar durante a preparação.'
           }
-          onClose={closeModal}
+          onClose={requestCloseModal}
+          closeOnBackdrop={false}
         >
           <form
             onSubmit={saveForm}
@@ -2848,7 +2914,8 @@ function App() {
                             <select
                               aria-label={`${side}: ${round}`}
                               value={form.roundResults?.[side]?.[round] || ''}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                setFormDirty(true);
                                 setForm((previous) => ({
                                   ...previous,
                                   roundResults: {
@@ -2858,8 +2925,8 @@ function App() {
                                       [round]: e.target.value,
                                     },
                                   },
-                                }))
-                              }
+                                }));
+                              }}
                             >
                               <option value="">Não registrado</option>
                               <option value="Ganhamos">Ganhamos</option>
@@ -2882,7 +2949,8 @@ function App() {
                           max="30"
                           placeholder="Round"
                           value={item.round || ''}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            setFormDirty(true);
                             setForm((p) => ({
                               ...p,
                               openingDuels: p.openingDuels.map((row, i) =>
@@ -2890,8 +2958,8 @@ function App() {
                                   ? { ...row, round: e.target.value }
                                   : row
                               ),
-                            }))
-                          }
+                            }));
+                          }}
                         />
                         <select
                           aria-label="Tipo de evento"
@@ -3585,7 +3653,7 @@ function App() {
               <button
                 type="button"
                 className="button button-quiet"
-                onClick={closeModal}
+                onClick={requestCloseModal}
               >
                 Cancelar
               </button>
@@ -3663,6 +3731,8 @@ function App() {
           onUpdateStartingSide={handleUpdateVodStartingSide}
           onUpdateReviewNotes={handleUpdateVodReviewNotes}
           onUpdateKill={handleUpdateVodKill}
+          onAddKill={handleAddVodKill}
+          onDeleteKill={handleDeleteVodKill}
         />
       )}
 

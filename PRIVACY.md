@@ -21,10 +21,9 @@ Kring VLR only makes outbound HTTPS requests when:
 
 ---
 
-## 2. Code Signing Policy
+## 2. Build & Release Integrity Policy
 
 - Official Windows release binaries and installers for **Kring VLR** are built exclusively through automated **GitHub Actions** workflows from the public repository [`gabrielphilipus/kring-vlr`](https://github.com/gabrielphilipus/kring-vlr) and published under GitHub Releases.
-- Free code signing for official Windows releases is provided by **SignPath.io**, using a certificate provided by the **SignPath Foundation** *(pending approval / active integration)*.
 - **Committers and Reviewers:** All source code changes are authored, reviewed, and approved by the repository owner and sole maintainer (`gabrielphilipus`).
 - The software will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it (limited strictly to the GitHub Releases update mechanism and user-initiated external links described above).
 
@@ -34,4 +33,4 @@ Kring VLR only makes outbound HTTPS requests when:
 
 - **100% Offline e Privado:** Vídeos, abates, estatísticas, anotações e táticos são processados e salvos exclusivamente no seu PC (`%APPDATA%\kring-vlr`). Nenhuma telemetria ou arquivo de treino é enviado para fora.
 - **Conexões de Rede:** Apenas consulta/download de atualizações oficiais no **GitHub Releases** (`electron-updater`) e links externos abertos manualmente por você.
-- **Política de Assinatura de Código:** Os instaladores oficiais de release são gerados via GitHub Actions a partir deste repositório público e mantidos exclusivamente por `gabrielphilipus`, com assinatura gratuita via SignPath.io / SignPath Foundation.
+- **Integridade das Releases:** Os instaladores oficiais de release são gerados via GitHub Actions a partir deste repositório público e mantidos exclusivamente por `gabrielphilipus`.

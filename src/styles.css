@@ -5711,3 +5711,37 @@ h3 {
   border-color: #cbd5e1;
   color: #0f172a;
 }
+
+.review-kill-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.review-kill-add-grid {
+  display: grid;
+  grid-template-columns: 90px 72px 1fr;
+  gap: 8px;
+  align-items: end;
+}
+
+.review-kill-delete-btn {
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: #94a3b8;
+}
+
+.review-kill-delete-btn:hover {
+  color: #ff6c83;
+  background: rgba(255, 108, 131, 0.14);
+}
+
+[data-theme='light'] .review-kill-add-form {
+  background: #f8fafc;
+  border-color: rgba(37, 99, 235, 0.3);
+}

@@ -1,13 +1,37 @@
 import { X } from 'lucide-react';
 import { useKeyPress } from '../../hooks/useKeyPress.js';
 
-export function Modal({ title, subtitle, onClose, children }) {
-  useKeyPress('Escape', onClose);
+export function Modal({
+  title,
+  subtitle,
+  onClose,
+  closeOnBackdrop = false,
+  closeOnEscape = true,
+  children,
+}) {
+  useKeyPress(
+    'Escape',
+    () => {
+      const tagName = document.activeElement?.tagName || '';
+      if (
+        tagName === 'INPUT' ||
+        tagName === 'TEXTAREA' ||
+        tagName === 'SELECT' ||
+        document.activeElement?.isContentEditable
+      ) {
+        return;
+      }
+      onClose();
+    },
+    closeOnEscape
+  );
   return (
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (closeOnBackdrop && event.target === event.currentTarget) {
+          onClose();
+        }
       }}
     >
       <div
