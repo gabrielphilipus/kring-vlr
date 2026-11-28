@@ -5,7 +5,7 @@
 ### Painel Inteligente de Scrims, Análise de VODs por Visão Computacional e Caderno Tático para Valorant
 
 [![Platform](https://img.shields.io/badge/Plataforma-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](https://github.com/gabrielphilipus/kring-vlr)
-[![Release](https://img.shields.io/badge/Release-v1.2.1-brightgreen.svg)](https://github.com/gabrielphilipus/kring-vlr/releases)
+[![Release](https://img.shields.io/badge/Release-v1.2.2-brightgreen.svg)](https://github.com/gabrielphilipus/kring-vlr/releases)
 [![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -57,7 +57,7 @@
 Você **NÃO** precisa ter Python, Node.js nem ferramentas de compilação instaladas.
 
 1. Acesse a aba de [**Releases no GitHub**](https://github.com/gabrielphilipus/kring-vlr/releases).
-2. Baixe o instalador oficial: `Kring-VLR-Setup-1.2.1.exe`.
+2. Baixe o instalador oficial: `Kring-VLR-Setup-1.2.2.exe`.
 3. Execute o instalador. Ele configurará o aplicativo com atalhos na Área de Trabalho e Menu Iniciar, com todos os recursos e motores de visão embutidos. As atualizações futuras são gerenciadas automaticamente pelo próprio programa.
 
 ---

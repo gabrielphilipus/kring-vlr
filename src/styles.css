@@ -4802,6 +4802,12 @@ h3 {
   flex: 1;
 }
 
+.updater-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .updater-msg {
   font-weight: 500;
 }

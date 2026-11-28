@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from './components/common/EmptyState.jsx';
 import { Field } from './components/common/Field.jsx';
 import { LightboxModal } from './components/common/LightboxModal.jsx';
@@ -112,8 +112,10 @@ function App() {
     () => localStorage.getItem('kring-theme') || 'dark'
   );
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const manualUpdateCheckRef = useRef(false);
   const [appVersion, setAppVersion] = useState(
-    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.1'
+    typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.2'
   );
   const imageInputRef = useRef(null);
 
@@ -152,44 +154,85 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (window.kringAPI?.onUpdaterStatus) {
-      const unsub = window.kringAPI.onUpdaterStatus((statusData) => {
-        if (statusData?.status === 'not-available') {
-          setToast(statusData.message || 'Você já está na versão mais recente.');
-        } else {
-          setUpdateInfo(statusData);
-        }
-      });
-      return unsub;
-    }
-  }, []);
-
-  const handleManualCheckUpdates = async () => {
-    if (!window.kringAPI?.checkForUpdates) {
-      setToast('Verificação indisponível no navegador web.');
-      return;
-    }
-    setToast('Buscando atualizações no GitHub...');
-    try {
-      const res = await window.kringAPI.checkForUpdates();
-      if (!res?.ok) {
-        let msg =
-          res?.error || res?.message || 'Nenhuma atualização encontrada.';
-        if (msg.includes('latest.yml') || msg.includes('404')) {
-          msg =
-            'Uma nova versão está sendo gerada no GitHub no momento. Aguarde cerca de 1 a 2 minutos e tente novamente.';
-        }
-        setToast(msg);
-      } else if (res.updateAvailable === false) {
-        setToast(
-          `Você já está utilizando a versão mais recente (${appVersion}).`
-        );
+  const runUpdateCheck = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!window.kringAPI?.checkForUpdates) {
+        if (!silent) setToast('Verificação indisponível no navegador web.');
+        return;
       }
-    } catch {
-      setToast('Erro ao consultar atualizações.');
-    }
-  };
+      manualUpdateCheckRef.current = !silent;
+      setCheckingUpdates(true);
+      if (!silent) setToast('Buscando atualizações no GitHub...');
+      try {
+        const res = await window.kringAPI.checkForUpdates();
+        if (!res?.ok) {
+          if (!silent) {
+            let msg =
+              res?.error || res?.message || 'Nenhuma atualização encontrada.';
+            if (msg.includes('latest.yml') || msg.includes('404')) {
+              msg =
+                'Uma nova versão está sendo gerada no GitHub no momento. Aguarde cerca de 1 a 2 minutos e tente novamente.';
+            }
+            setToast(msg);
+          }
+        } else if (res.updateAvailable === false && !silent && !res.checking) {
+          setToast(
+            `Você já está utilizando a versão mais recente (${appVersion}).`
+          );
+        }
+      } catch {
+        if (!silent) setToast('Erro ao consultar atualizações.');
+      } finally {
+        setCheckingUpdates(false);
+      }
+    },
+    [appVersion]
+  );
+
+  useEffect(() => {
+    const unsub = window.kringAPI?.onUpdaterStatus
+      ? window.kringAPI.onUpdaterStatus((statusData) => {
+          if (statusData?.status === 'checking') {
+            setCheckingUpdates(true);
+            return;
+          }
+          setCheckingUpdates(false);
+          if (statusData?.status === 'not-available') {
+            if (manualUpdateCheckRef.current) {
+              setToast(
+                statusData.message || 'Você já está na versão mais recente.'
+              );
+              manualUpdateCheckRef.current = false;
+            }
+            return;
+          }
+          if (statusData?.status === 'error') {
+            if (manualUpdateCheckRef.current) {
+              setToast(
+                statusData.message || 'Erro ao verificar atualizações.'
+              );
+              manualUpdateCheckRef.current = false;
+            }
+            return;
+          }
+          manualUpdateCheckRef.current = false;
+          setUpdateInfo(statusData);
+        })
+      : undefined;
+
+    const autoCheckTimer = window.setTimeout(() => {
+      if (window.kringAPI?.checkForUpdates) {
+        runUpdateCheck({ silent: true });
+      }
+    }, 400);
+
+    return () => {
+      window.clearTimeout(autoCheckTimer);
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [runUpdateCheck]);
+
+  const handleManualCheckUpdates = () => runUpdateCheck({ silent: false });
   const vodFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const matchFileInputRef = useRef(null);
@@ -1652,9 +1695,13 @@ function App() {
               type="button"
               className="updater-check-btn"
               onClick={handleManualCheckUpdates}
+              disabled={checkingUpdates}
               title="Buscar atualizações no GitHub"
             >
-              <RefreshCw size={11} />
+              <RefreshCw
+                size={11}
+                className={checkingUpdates ? 'spin' : ''}
+              />
             </button>
           </div>
         </div>
@@ -1814,7 +1861,8 @@ function App() {
         {updateInfo &&
           (updateInfo.status === 'downloading' ||
             updateInfo.status === 'downloaded' ||
-            updateInfo.status === 'available') && (
+            updateInfo.status === 'available' ||
+            updateInfo.status === 'manual-available') && (
             <div className={`updater-banner ${updateInfo.status}`}>
               <div className="updater-content">
                 {updateInfo.status === 'downloading' ? (
@@ -1832,15 +1880,37 @@ function App() {
                   </div>
                 )}
               </div>
-              {updateInfo.status === 'downloaded' && (
-                <button
-                  type="button"
-                  className="button button-primary button-small"
-                  onClick={() => window.kringAPI?.quitAndInstallUpdate()}
-                >
-                  Reiniciar e aplicar
-                </button>
-              )}
+              <div className="updater-actions">
+                {updateInfo.status === 'downloaded' && (
+                  <button
+                    type="button"
+                    className="button button-primary button-small"
+                    onClick={() => window.kringAPI?.quitAndInstallUpdate()}
+                  >
+                    Reiniciar e aplicar
+                  </button>
+                )}
+                {(updateInfo.status === 'manual-available' ||
+                  updateInfo.status === 'available' ||
+                  updateInfo.status === 'downloaded') && (
+                  <button
+                    type="button"
+                    className={`button button-small ${
+                      updateInfo.status === 'manual-available'
+                        ? 'button-primary'
+                        : 'button-quiet'
+                    }`}
+                    onClick={() =>
+                      openExternal(
+                        updateInfo.releaseUrl ||
+                          'https://github.com/gabrielphilipus/kring-vlr/releases/latest'
+                      )
+                    }
+                  >
+                    <ExternalLink size={13} /> Baixar no GitHub
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 className="updater-close-btn"

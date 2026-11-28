@@ -41,6 +41,60 @@ const {
 let mainWindow;
 let currentAnalyzerProcess = null;
 
+const RELEASES_LATEST_URL =
+  'https://github.com/gabrielphilipus/kring-vlr/releases/latest';
+const RELEASES_LATEST_API_URL =
+  'https://api.github.com/repos/gabrielphilipus/kring-vlr/releases/latest';
+
+function isNewerVersion(remoteVersion, currentVersion) {
+  const parse = (v) => {
+    const clean = String(v || '')
+      .trim()
+      .replace(/^v/i, '')
+      .split('-')[0];
+    if (!/^\d+(\.\d+)*$/.test(clean)) return null;
+    const parts = clean.split('.').map((n) => Number(n));
+    while (parts.length < 3) parts.push(0);
+    return parts.slice(0, 3);
+  };
+  const r = parse(remoteVersion);
+  const c = parse(currentVersion);
+  if (!r || !c) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (r[i] > c[i]) return true;
+    if (r[i] < c[i]) return false;
+  }
+  return false;
+}
+
+async function fetchLatestGithubRelease() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(RELEASES_LATEST_API_URL, {
+      headers: {
+        'User-Agent': 'kring-vlr',
+        Accept: 'application/vnd.github+json',
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const version = String(data?.tag_name || '')
+      .trim()
+      .replace(/^v/i, '');
+    if (!version) return null;
+    return {
+      version,
+      releaseUrl: data?.html_url || RELEASES_LATEST_URL,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function stripUtf8Bom(str) {
   if (typeof str === 'string' && str.charCodeAt(0) === 0xfeff) {
     return str.slice(1);
@@ -1383,6 +1437,9 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  let isCheckingUpdates = false;
+  let downloadedUpdateInfo = null;
+
   if (app.isPackaged && autoUpdater) {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -1398,6 +1455,7 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('updater:status', {
         status: 'available',
         version: info?.version,
+        releaseUrl: RELEASES_LATEST_URL,
         message: `Nova versão v${info?.version || ''} encontrada! Baixando...`,
       });
     });
@@ -1406,14 +1464,17 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('updater:status', {
         status: 'downloading',
         percent: Math.round(progressObj.percent),
+        releaseUrl: RELEASES_LATEST_URL,
         message: `Baixando atualização: ${Math.round(progressObj.percent)}%`,
       });
     });
 
     autoUpdater.on('update-downloaded', (info) => {
+      downloadedUpdateInfo = info || { version: '' };
       mainWindow?.webContents.send('updater:status', {
         status: 'downloaded',
         version: info?.version,
+        releaseUrl: RELEASES_LATEST_URL,
         message: `Versão v${info?.version || ''} pronta para instalar!`,
       });
     });
@@ -1446,45 +1507,100 @@ app.whenReady().then(() => {
         message: formatUpdaterError(err),
       });
     });
-
-    // Check on startup after 2 seconds
-    setTimeout(() => {
-      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-        console.warn(
-          '[AutoUpdater] Erro ao verificar atualizações:',
-          err?.message || err
-        );
-      });
-    }, 2000);
   }
 
   ipcMain.handle('updater:check', async () => {
-    if (app.isPackaged && autoUpdater) {
-      try {
-        const res = await autoUpdater.checkForUpdates();
-        const isAvailable = !!(res?.updateInfo && res?.updateInfo?.version && res.updateInfo.version !== app.getVersion());
+    const currentVersion = app.getVersion();
+    if (downloadedUpdateInfo) {
+      mainWindow?.webContents.send('updater:status', {
+        status: 'downloaded',
+        version: downloadedUpdateInfo.version,
+        releaseUrl: RELEASES_LATEST_URL,
+        message: `Versão v${downloadedUpdateInfo.version || ''} pronta para instalar!`,
+      });
+      return {
+        ok: true,
+        updateAvailable: true,
+        alreadyDownloaded: true,
+        updateInfo: downloadedUpdateInfo,
+        currentVersion,
+      };
+    }
+
+    if (isCheckingUpdates) {
+      return { ok: true, checking: true, currentVersion };
+    }
+
+    isCheckingUpdates = true;
+    try {
+      if (app.isPackaged && autoUpdater) {
+        try {
+          const res = await autoUpdater.checkForUpdates();
+          const isAvailable = isNewerVersion(
+            res?.updateInfo?.version,
+            currentVersion
+          );
+          return {
+            ok: true,
+            updateAvailable: isAvailable,
+            updateInfo: res?.updateInfo,
+            currentVersion,
+          };
+        } catch (err) {
+          const msg = err?.message || String(err);
+          if (msg.includes('latest.yml') || msg.includes('404')) {
+            const latest = await fetchLatestGithubRelease();
+            if (latest && isNewerVersion(latest.version, currentVersion)) {
+              mainWindow?.webContents.send('updater:status', {
+                status: 'manual-available',
+                version: latest.version,
+                releaseUrl: latest.releaseUrl,
+                message: `Nova versão v${latest.version} disponível no GitHub!`,
+              });
+              return {
+                ok: true,
+                updateAvailable: true,
+                manualDownloadOnly: true,
+                updateInfo: latest,
+                currentVersion,
+              };
+            }
+          }
+          const friendly =
+            msg.includes('latest.yml') || msg.includes('404')
+              ? 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.'
+              : msg.includes('net::ERR_INTERNET_DISCONNECTED') ||
+                  msg.includes('ENOTFOUND')
+                ? 'Sem conexão com a internet.'
+                : `Erro: ${msg}`;
+          return { ok: false, error: friendly };
+        }
+      }
+
+      const latest = await fetchLatestGithubRelease();
+      if (latest && isNewerVersion(latest.version, currentVersion)) {
+        mainWindow?.webContents.send('updater:status', {
+          status: 'manual-available',
+          version: latest.version,
+          releaseUrl: latest.releaseUrl,
+          message: `Nova versão v${latest.version} disponível no GitHub!`,
+        });
         return {
           ok: true,
-          updateAvailable: isAvailable,
-          updateInfo: res?.updateInfo,
-          currentVersion: app.getVersion(),
+          updateAvailable: true,
+          manualDownloadOnly: true,
+          updateInfo: latest,
+          currentVersion,
         };
-      } catch (err) {
-        const msg = err?.message || String(err);
-        const friendly =
-          msg.includes('latest.yml') || msg.includes('404')
-            ? 'Uma nova versão está sendo compilada nos servidores do GitHub. Aguarde 1 a 2 minutos e tente novamente.'
-            : msg.includes('net::ERR_INTERNET_DISCONNECTED') ||
-                msg.includes('ENOTFOUND')
-              ? 'Sem conexão com a internet.'
-              : `Erro: ${msg}`;
-        return { ok: false, error: friendly };
       }
+      return {
+        ok: true,
+        updateAvailable: false,
+        currentVersion,
+      };
+    } finally {
+      isCheckingUpdates = false;
     }
-    return {
-      ok: false,
-      message: 'Modo de desenvolvimento (app não empacotado)',
-    };
   });
 
   ipcMain.handle('updater:quit-and-install', () => {
@@ -1527,4 +1643,5 @@ module.exports = {
   handleDataImport,
   handleDataSave,
   queueSaveData,
+  isNewerVersion,
 };
